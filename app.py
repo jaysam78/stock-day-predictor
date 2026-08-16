@@ -3,12 +3,13 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-# ---------------------------------------------------------
+
+# =========================================================
 # PAGE SETUP
-# ---------------------------------------------------------
+# =========================================================
 
 st.set_page_config(
-    page_title="TSX Morning Trader",
+    page_title="Morning Market Scanner",
     page_icon="📈",
     layout="centered"
 )
@@ -17,9 +18,9 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.2rem;
+        padding-top: 1rem;
         padding-bottom: 3rem;
-        max-width: 950px;
+        max-width: 1000px;
     }
 
     div[data-testid="stMetric"] {
@@ -27,29 +28,33 @@ st.markdown(
         padding: 12px;
         border-radius: 14px;
     }
+
+    .small-note {
+        opacity: 0.72;
+        font-size: 0.9rem;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.title("TSX Morning Trader")
+st.title("Morning Market Scanner")
 
 st.caption(
-    "Morning scanner for TSX stocks. "
-    "Estimates which stocks are favoured for today and the next 2–5 trading days."
+    "Early-morning stock scanner for TSX, S&P 500 and Nasdaq-100 stocks."
 )
 
 st.warning(
-    "BUY / HOLD / SELL labels are model signals for research only. "
-    "They are not guaranteed investment recommendations."
+    "Signals are model-based research indicators only. "
+    "They are not guaranteed buy or sell recommendations."
 )
 
 
-# ---------------------------------------------------------
-# TSX STOCK UNIVERSE
-# ---------------------------------------------------------
+# =========================================================
+# STOCK UNIVERSES
+# =========================================================
 
-TSX_STOCKS = {
+TSX = {
     "RY.TO": "Royal Bank",
     "TD.TO": "TD Bank",
     "BMO.TO": "Bank of Montreal",
@@ -57,7 +62,7 @@ TSX_STOCKS = {
     "CM.TO": "CIBC",
     "NA.TO": "National Bank",
 
-    "CNQ.TO": "Canadian Natural Resources",
+    "CNQ.TO": "Canadian Natural",
     "SU.TO": "Suncor",
     "CVE.TO": "Cenovus",
     "IMO.TO": "Imperial Oil",
@@ -69,7 +74,7 @@ TSX_STOCKS = {
     "CSU.TO": "Constellation Software",
     "OTEX.TO": "OpenText",
 
-    "CNR.TO": "Canadian National Railway",
+    "CNR.TO": "CN Rail",
     "CP.TO": "CPKC",
 
     "ABX.TO": "Barrick Mining",
@@ -93,11 +98,86 @@ TSX_STOCKS = {
 }
 
 
-# ---------------------------------------------------------
-# SECTOR ETF MAPPING
-# ---------------------------------------------------------
+SP500 = {
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "NVDA": "NVIDIA",
+    "AMZN": "Amazon",
+    "META": "Meta",
+    "GOOGL": "Alphabet",
+    "BRK-B": "Berkshire Hathaway",
+    "JPM": "JPMorgan",
+    "V": "Visa",
+    "MA": "Mastercard",
+    "XOM": "Exxon Mobil",
+    "CVX": "Chevron",
+    "LLY": "Eli Lilly",
+    "AVGO": "Broadcom",
+    "WMT": "Walmart",
+    "COST": "Costco",
+    "NFLX": "Netflix",
+    "AMD": "AMD",
+    "CRM": "Salesforce",
+    "ORCL": "Oracle",
+    "HD": "Home Depot",
+    "BAC": "Bank of America",
+    "GS": "Goldman Sachs",
+    "CAT": "Caterpillar",
+    "GE": "GE Aerospace",
+    "KO": "Coca-Cola",
+    "PEP": "PepsiCo",
+    "DIS": "Disney",
+    "UBER": "Uber",
+    "PLTR": "Palantir",
+}
 
-SECTOR_ETF = {
+
+NASDAQ100 = {
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "NVDA": "NVIDIA",
+    "AMZN": "Amazon",
+    "META": "Meta",
+    "GOOGL": "Alphabet",
+    "AVGO": "Broadcom",
+    "TSLA": "Tesla",
+    "COST": "Costco",
+    "NFLX": "Netflix",
+    "AMD": "AMD",
+    "ADBE": "Adobe",
+    "INTC": "Intel",
+    "QCOM": "Qualcomm",
+    "AMAT": "Applied Materials",
+    "MU": "Micron",
+    "PANW": "Palo Alto Networks",
+    "CRWD": "CrowdStrike",
+    "MELI": "MercadoLibre",
+    "BKNG": "Booking Holdings",
+    "CSCO": "Cisco",
+    "INTU": "Intuit",
+    "ISRG": "Intuitive Surgical",
+    "MRVL": "Marvell",
+    "LRCX": "Lam Research",
+    "KLAC": "KLA",
+    "SNPS": "Synopsys",
+    "CDNS": "Cadence",
+    "MSTR": "Strategy",
+    "ARM": "Arm Holdings",
+}
+
+
+ALL_NAMES = {}
+
+ALL_NAMES.update(TSX)
+ALL_NAMES.update(SP500)
+ALL_NAMES.update(NASDAQ100)
+
+
+# =========================================================
+# SECTOR ETF MAPPING
+# =========================================================
+
+SECTOR = {
     "RY.TO": "XFN.TO",
     "TD.TO": "XFN.TO",
     "BMO.TO": "XFN.TO",
@@ -127,24 +207,68 @@ SECTOR_ETF = {
     "FTS.TO": "XUT.TO",
     "EMA.TO": "XUT.TO",
 
-    "BCE.TO": "XEI.TO",
-    "T.TO": "XEI.TO",
+    "AAPL": "XLK",
+    "MSFT": "XLK",
+    "NVDA": "SMH",
+    "AMD": "SMH",
+    "AVGO": "SMH",
+    "QCOM": "SMH",
+    "INTC": "SMH",
+    "AMAT": "SMH",
+    "MU": "SMH",
+    "LRCX": "SMH",
+    "KLAC": "SMH",
+    "MRVL": "SMH",
 
-    "ATD.TO": "XST.TO",
-    "L.TO": "XST.TO",
+    "AMZN": "XLY",
+    "TSLA": "XLY",
+    "HD": "XLY",
 
-    "CNR.TO": "XIU.TO",
-    "CP.TO": "XIU.TO",
+    "META": "XLC",
+    "GOOGL": "XLC",
+    "NFLX": "XLC",
+    "DIS": "XLC",
+
+    "JPM": "XLF",
+    "BAC": "XLF",
+    "GS": "XLF",
+    "V": "XLF",
+    "MA": "XLF",
+
+    "XOM": "XLE",
+    "CVX": "XLE",
+
+    "WMT": "XLP",
+    "COST": "XLP",
+    "KO": "XLP",
+    "PEP": "XLP",
 }
 
 
-# ---------------------------------------------------------
-# DATA FUNCTIONS
-# ---------------------------------------------------------
+# =========================================================
+# MARKET INDEX
+# =========================================================
+
+def market_index(ticker):
+
+    if ticker.endswith(".TO"):
+        return "^GSPTSE"
+
+    if ticker in NASDAQ100:
+        return "^IXIC"
+
+    return "^GSPC"
+
+
+# =========================================================
+# DATA
+# =========================================================
 
 @st.cache_data(ttl=600)
 def download_data(ticker, period="1y"):
+
     try:
+
         df = yf.download(
             ticker,
             period=period,
@@ -160,237 +284,616 @@ def download_data(ticker, period="1y"):
         return df.dropna()
 
     except Exception:
+
         return pd.DataFrame()
 
 
 def get_series(df, column):
+
     if df is None or df.empty:
         return pd.Series(dtype=float)
 
     if column not in df.columns:
         return pd.Series(dtype=float)
 
-    s = df[column]
+    value = df[column]
 
-    if isinstance(s, pd.DataFrame):
-        s = s.iloc[:, 0]
+    if isinstance(value, pd.DataFrame):
+        value = value.iloc[:, 0]
 
-    return pd.to_numeric(s, errors="coerce")
+    return pd.to_numeric(
+        value,
+        errors="coerce"
+    )
 
 
-# ---------------------------------------------------------
-# TECHNICAL INDICATORS
-# ---------------------------------------------------------
+# =========================================================
+# INDICATORS
+# =========================================================
 
-def calculate_rsi(close, period=14):
+def rsi(close, period=14):
 
     delta = close.diff()
 
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    gains = delta.clip(lower=0).rolling(period).mean()
 
-    rs = gain / loss.replace(0, np.nan)
+    losses = (
+        -delta.clip(upper=0)
+    ).rolling(period).mean()
 
-    return 100 - (100 / (1 + rs))
+    rs = gains / losses.replace(
+        0,
+        np.nan
+    )
+
+    return 100 - (
+        100 /
+        (1 + rs)
+    )
 
 
 def clamp(value, minimum, maximum):
 
-    return max(minimum, min(maximum, value))
+    return max(
+        minimum,
+        min(
+            maximum,
+            value
+        )
+    )
 
 
-# ---------------------------------------------------------
-# MARKET SCORING MODEL
-# ---------------------------------------------------------
+# =========================================================
+# RSI INTERPRETATION
+# =========================================================
+
+def rsi_label(value):
+
+    if np.isnan(value):
+        return "Unknown"
+
+    if value < 30:
+        return "Oversold"
+
+    if value < 45:
+        return "Weak"
+
+    if value < 55:
+        return "Neutral"
+
+    if value < 65:
+        return "Healthy momentum"
+
+    if value < 70:
+        return "Strong momentum"
+
+    if value < 80:
+        return "Overbought risk"
+
+    return "Very extended"
+
+
+# =========================================================
+# STOCK ANALYSIS
+# =========================================================
 
 def analyze_stock(ticker):
 
-    stock = download_data(ticker)
+    stock = download_data(
+        ticker
+    )
 
-    if stock.empty or len(stock) < 70:
+    if stock.empty:
         return None
 
-    market = download_data("^GSPTSE")
+    if len(stock) < 70:
+        return None
 
-    sector_symbol = SECTOR_ETF.get(ticker, "XIU.TO")
-    sector = download_data(sector_symbol)
 
-    close = get_series(stock, "Close")
-    volume = get_series(stock, "Volume")
+    index_ticker = market_index(
+        ticker
+    )
+
+    market = download_data(
+        index_ticker
+    )
+
+
+    sector_ticker = SECTOR.get(
+        ticker,
+        "XIU.TO"
+        if ticker.endswith(".TO")
+        else "SPY"
+    )
+
+    sector = download_data(
+        sector_ticker
+    )
+
+
+    close = get_series(
+        stock,
+        "Close"
+    )
+
+    volume = get_series(
+        stock,
+        "Volume"
+    )
+
 
     if len(close) < 70:
         return None
 
-    # Price momentum
-    ret1 = close.pct_change(1).iloc[-1]
-    ret3 = close.pct_change(3).iloc[-1]
-    ret5 = close.pct_change(5).iloc[-1]
-    ret20 = close.pct_change(20).iloc[-1]
 
-    # Moving averages
-    ma5 = close.rolling(5).mean().iloc[-1]
-    ma20 = close.rolling(20).mean().iloc[-1]
-    ma50 = close.rolling(50).mean().iloc[-1]
+    price = float(
+        close.iloc[-1]
+    )
 
+
+    # -----------------------------------------
+    # RETURNS
+    # -----------------------------------------
+
+    ret1 = close.pct_change(
+        1
+    ).iloc[-1]
+
+    ret3 = close.pct_change(
+        3
+    ).iloc[-1]
+
+    ret5 = close.pct_change(
+        5
+    ).iloc[-1]
+
+    ret20 = close.pct_change(
+        20
+    ).iloc[-1]
+
+
+    # -----------------------------------------
+    # MOVING AVERAGES
+    # -----------------------------------------
+
+    ma5 = close.rolling(
+        5
+    ).mean().iloc[-1]
+
+    ma20 = close.rolling(
+        20
+    ).mean().iloc[-1]
+
+    ma50 = close.rolling(
+        50
+    ).mean().iloc[-1]
+
+
+    # -----------------------------------------
     # RSI
-    rsi_value = calculate_rsi(close).iloc[-1]
+    # -----------------------------------------
 
-    # Volume
-    volume_mean = volume.rolling(20).mean().iloc[-1]
-    volume_std = volume.rolling(20).std().iloc[-1]
+    rsi_value = rsi(
+        close
+    ).iloc[-1]
 
-    if volume_std and not np.isnan(volume_std):
-        volume_z = (
-            volume.iloc[-1] - volume_mean
-        ) / volume_std
+
+    # -----------------------------------------
+    # VOLUME
+    # -----------------------------------------
+
+    volume_avg = volume.rolling(
+        20
+    ).mean().iloc[-1]
+
+    latest_volume = volume.iloc[-1]
+
+    if (
+        volume_avg
+        and not np.isnan(volume_avg)
+    ):
+
+        relative_volume = (
+            latest_volume /
+            volume_avg
+        )
+
     else:
-        volume_z = 0
 
-    # TSX direction
-    market_close = get_series(market, "Close")
+        relative_volume = 1
+
+
+    # -----------------------------------------
+    # MARKET DIRECTION
+    # -----------------------------------------
+
+    market_close = get_series(
+        market,
+        "Close"
+    )
 
     if len(market_close) >= 2:
+
         market_move = (
-            market_close.iloc[-1] /
+            market_close.iloc[-1]
+            /
             market_close.iloc[-2]
             - 1
         )
+
     else:
+
         market_move = 0
 
-    # Sector direction
-    sector_close = get_series(sector, "Close")
+
+    # -----------------------------------------
+    # SECTOR DIRECTION
+    # -----------------------------------------
+
+    sector_close = get_series(
+        sector,
+        "Close"
+    )
 
     if len(sector_close) >= 2:
+
         sector_move = (
-            sector_close.iloc[-1] /
+            sector_close.iloc[-1]
+            /
             sector_close.iloc[-2]
             - 1
         )
+
     else:
+
         sector_move = 0
 
 
-    # -----------------------------------------------------
-    # TODAY SCORE
-    # -----------------------------------------------------
+    # =====================================================
+    # DAY TRADE SCORE
+    # =====================================================
 
-    today_score = 0
+    day_score = 50
 
-    today_score += 0.22 * np.tanh(ret1 / 0.015)
-    today_score += 0.15 * np.tanh(ret3 / 0.025)
-    today_score += 0.10 * np.tanh(ret5 / 0.04)
 
-    today_score += 0.15 * np.tanh(
-        market_move / 0.012
-    )
-
-    today_score += 0.18 * np.tanh(
-        sector_move / 0.015
-    )
-
-    today_score += 0.08 * np.tanh(
-        volume_z / 2
-    )
-
-    ma_signal = (
-        ma5 / ma20
-    ) - 1
-
-    today_score += 0.12 * np.tanh(
-        ma_signal / 0.025
+    day_score += (
+        12 *
+        np.tanh(
+            ret1 /
+            0.015
+        )
     )
 
 
-    # RSI adjustment
-
-    if not np.isnan(rsi_value):
-
-        if rsi_value > 78:
-            today_score -= 0.08
-
-        elif rsi_value > 70:
-            today_score -= 0.03
-
-        elif rsi_value < 30:
-            today_score += 0.04
-
-
-    today_probability = clamp(
-        0.50 + today_score * 0.25,
-        0.30,
-        0.78
+    day_score += (
+        8 *
+        np.tanh(
+            ret3 /
+            0.025
+        )
     )
 
 
-    # -----------------------------------------------------
-    # NEXT 2–5 DAYS SCORE
-    # -----------------------------------------------------
-
-    swing_score = 0
-
-    swing_score += 0.18 * np.tanh(
-        ret3 / 0.025
-    )
-
-    swing_score += 0.22 * np.tanh(
-        ret5 / 0.04
-    )
-
-    swing_score += 0.18 * np.tanh(
-        ret20 / 0.09
-    )
-
-    swing_score += 0.15 * np.tanh(
-        ((ma5 / ma20) - 1) / 0.03
-    )
-
-    swing_score += 0.16 * np.tanh(
-        ((ma20 / ma50) - 1) / 0.05
-    )
-
-    swing_score += 0.11 * np.tanh(
-        sector_move / 0.015
+    day_score += (
+        7 *
+        np.tanh(
+            market_move /
+            0.012
+        )
     )
 
 
-    if not np.isnan(rsi_value):
-
-        if 45 <= rsi_value <= 68:
-            swing_score += 0.04
-
-        elif rsi_value > 78:
-            swing_score -= 0.07
-
-
-    swing_probability = clamp(
-        0.50 + swing_score * 0.27,
-        0.30,
-        0.80
+    day_score += (
+        9 *
+        np.tanh(
+            sector_move /
+            0.015
+        )
     )
 
 
-    latest_price = float(close.iloc[-1])
+    ma_short = (
+        ma5 /
+        ma20
+        - 1
+    )
+
+
+    day_score += (
+        7 *
+        np.tanh(
+            ma_short /
+            0.025
+        )
+    )
+
+
+    # Volume bonus
+
+    if relative_volume >= 2:
+        day_score += 6
+
+    elif relative_volume >= 1.5:
+        day_score += 4
+
+    elif relative_volume >= 1.2:
+        day_score += 2
+
+
+    # RSI
+
+    if not np.isnan(
+        rsi_value
+    ):
+
+        if (
+            55 <=
+            rsi_value <=
+            68
+        ):
+            day_score += 4
+
+        elif (
+            rsi_value >
+            78
+        ):
+            day_score -= 6
+
+
+    day_score = int(
+        clamp(
+            round(day_score),
+            0,
+            100
+        )
+    )
+
+
+    # =====================================================
+    # SWING SCORE
+    # =====================================================
+
+    swing_score = 50
+
+
+    swing_score += (
+        8 *
+        np.tanh(
+            ret3 /
+            0.025
+        )
+    )
+
+
+    swing_score += (
+        11 *
+        np.tanh(
+            ret5 /
+            0.04
+        )
+    )
+
+
+    swing_score += (
+        10 *
+        np.tanh(
+            ret20 /
+            0.09
+        )
+    )
+
+
+    swing_score += (
+        8 *
+        np.tanh(
+            (
+                ma5 /
+                ma20
+                - 1
+            )
+            /
+            0.03
+        )
+    )
+
+
+    swing_score += (
+        8 *
+        np.tanh(
+            (
+                ma20 /
+                ma50
+                - 1
+            )
+            /
+            0.05
+        )
+    )
+
+
+    swing_score += (
+        6 *
+        np.tanh(
+            sector_move /
+            0.015
+        )
+    )
+
+
+    if (
+        45 <=
+        rsi_value <=
+        68
+    ):
+        swing_score += 4
+
+
+    if (
+        rsi_value >
+        80
+    ):
+        swing_score -= 7
+
+
+    swing_score = int(
+        clamp(
+            round(
+                swing_score
+            ),
+            0,
+            100
+        )
+    )
+
+
+    # =====================================================
+    # SIGNAL
+    # =====================================================
+
+    if (
+        day_score >= 75
+        and
+        swing_score >= 70
+    ):
+
+        signal = (
+            "STRONG SETUP"
+        )
+
+
+    elif (
+        day_score >= 65
+    ):
+
+        signal = (
+            "DAY TRADE WATCH"
+        )
+
+
+    elif (
+        swing_score >= 70
+    ):
+
+        signal = (
+            "SWING BUY CANDIDATE"
+        )
+
+
+    elif (
+        day_score >= 58
+        or
+        swing_score >= 60
+    ):
+
+        signal = (
+            "WATCH"
+        )
+
+
+    elif (
+        day_score <= 40
+        and
+        swing_score <= 45
+    ):
+
+        signal = (
+            "AVOID / BEARISH"
+        )
+
+
+    else:
+
+        signal = (
+            "NEUTRAL"
+        )
+
+
+    # =====================================================
+    # EXPLANATION
+    # =====================================================
+
+    reasons = []
+
+
+    if ret5 > 0.03:
+
+        reasons.append(
+            "Strong 5-day momentum"
+        )
+
+
+    if sector_move > 0.005:
+
+        reasons.append(
+            "Sector is strong"
+        )
+
+
+    if market_move > 0.005:
+
+        reasons.append(
+            "Broad market is positive"
+        )
+
+
+    if relative_volume >= 1.5:
+
+        reasons.append(
+            "Above-average volume"
+        )
+
+
+    if (
+        55 <=
+        rsi_value <=
+        68
+    ):
+
+        reasons.append(
+            "Healthy RSI momentum"
+        )
+
+
+    if (
+        ma5 >
+        ma20 >
+        ma50
+    ):
+
+        reasons.append(
+            "Strong moving-average trend"
+        )
+
+
+    if not reasons:
+
+        reasons.append(
+            "No major confirming signal"
+        )
 
 
     return {
 
-        "ticker": ticker,
+        "ticker":
+            ticker,
 
         "company":
-            TSX_STOCKS.get(
+            ALL_NAMES.get(
                 ticker,
                 ticker
             ),
 
         "price":
-            latest_price,
+            price,
 
-        "today":
-            today_probability,
+        "day_score":
+            day_score,
 
-        "swing":
-            swing_probability,
+        "swing_score":
+            swing_score,
+
+        "signal":
+            signal,
 
         "ret1":
             ret1,
@@ -404,98 +907,87 @@ def analyze_stock(ticker):
         "rsi":
             rsi_value,
 
-        "market":
+        "rsi_label":
+            rsi_label(
+                rsi_value
+            ),
+
+        "relative_volume":
+            relative_volume,
+
+        "market_move":
             market_move,
 
-        "sector":
+        "sector_move":
             sector_move,
 
-        "volume_z":
-            volume_z
+        "reasons":
+            reasons,
+
+        "rank":
+            (
+                day_score *
+                0.55
+                +
+                swing_score *
+                0.45
+            )
     }
 
 
-# ---------------------------------------------------------
-# BUY / HOLD / SELL SIGNAL
-# ---------------------------------------------------------
+# =========================================================
+# HOLDINGS AND WATCHLIST
+# =========================================================
 
-def get_signal(today, swing, owned=False):
-
-    if owned:
-
-        if today >= 0.64 and swing >= 0.62:
-            return "ADD / BUY"
-
-        elif today <= 0.42 and swing <= 0.45:
-            return "SELL / REVIEW"
-
-        elif today <= 0.46 or swing <= 0.46:
-            return "HOLD — CAUTION"
-
-        else:
-            return "HOLD"
-
-
-    else:
-
-        if today >= 0.64 and swing >= 0.62:
-            return "BUY CANDIDATE"
-
-        elif today >= 0.59 and swing >= 0.57:
-            return "WATCH / POSSIBLE BUY"
-
-        elif today <= 0.42 and swing <= 0.45:
-            return "AVOID / BEARISH"
-
-        else:
-            return "NEUTRAL"
-
-
-def confidence(today, swing):
-
-    strongest_edge = max(
-        abs(today - 0.50),
-        abs(swing - 0.50)
-    )
-
-    if strongest_edge >= 0.16:
-        return "HIGH"
-
-    elif strongest_edge >= 0.10:
-        return "MEDIUM"
-
-    else:
-        return "LOW"
-
-
-# ---------------------------------------------------------
-# FAVOURITES
-# ---------------------------------------------------------
-
-st.subheader("My Holdings / Favourites")
-
-default_favourites = "TRP.TO"
-
-favourites_text = st.text_input(
-    "Enter stocks you own or want to watch",
-    value=default_favourites,
-    help="Example: TRP.TO, RY.TO, CNQ.TO"
+st.subheader(
+    "My Holdings"
 )
 
-favourites = [
-    x.strip().upper()
-    for x in favourites_text.split(",")
-    if x.strip()
+holdings_text = st.text_input(
+    "Stocks you already own",
+    value="TRP.TO",
+    help=(
+        "Example: "
+        "TRP.TO, RY.TO, NVDA"
+    )
+)
+
+holdings = [
+    ticker.strip().upper()
+    for ticker
+    in holdings_text.split(",")
+    if ticker.strip()
 ]
 
 
-# ---------------------------------------------------------
+st.subheader(
+    "My Watchlist"
+)
+
+watchlist_text = st.text_input(
+    "Stocks you want to watch",
+    value="",
+    help=(
+        "Example: "
+        "CVE.TO, CNQ.TO, NVDA, AAPL"
+    )
+)
+
+watchlist = [
+    ticker.strip().upper()
+    for ticker
+    in watchlist_text.split(",")
+    if ticker.strip()
+]
+
+
+# =========================================================
 # TABS
-# ---------------------------------------------------------
+# =========================================================
 
 scanner_tab, stock_tab = st.tabs(
     [
-        "Morning TSX Scanner",
+        "Morning Scanner",
         "Analyze One Stock"
     ]
 )
@@ -507,106 +999,155 @@ scanner_tab, stock_tab = st.tabs(
 
 with scanner_tab:
 
-    st.subheader(
-        "Stocks favoured to rise"
+    market_choice = st.selectbox(
+        "Market to scan",
+        [
+            "TSX",
+            "S&P 500",
+            "Nasdaq-100",
+            "All Markets"
+        ]
     )
 
-    st.write(
-        "Run this before the market opens or early in the trading day."
-    )
 
     scan_size = st.selectbox(
-        "Number of TSX stocks to scan",
+        "Number of stocks to scan",
         [
             10,
             20,
-            30
+            30,
+            50
         ],
         index=1
     )
 
+
     if st.button(
-        "Scan TSX Now",
+        "Run Morning Scan",
         type="primary",
         use_container_width=True
     ):
 
-        universe = list(
-            TSX_STOCKS.keys()
-        )[:scan_size]
+        if (
+            market_choice ==
+            "TSX"
+        ):
 
-        for favourite in favourites:
+            universe = list(
+                TSX.keys()
+            )
 
-            if favourite not in universe:
+
+        elif (
+            market_choice ==
+            "S&P 500"
+        ):
+
+            universe = list(
+                SP500.keys()
+            )
+
+
+        elif (
+            market_choice ==
+            "Nasdaq-100"
+        ):
+
+            universe = list(
+                NASDAQ100.keys()
+            )
+
+
+        else:
+
+            universe = list(
+                dict.fromkeys(
+                    list(
+                        TSX.keys()
+                    )
+                    +
+                    list(
+                        SP500.keys()
+                    )
+                    +
+                    list(
+                        NASDAQ100.keys()
+                    )
+                )
+            )
+
+
+        universe = universe[
+            :scan_size
+        ]
+
+
+        for ticker in (
+            holdings +
+            watchlist
+        ):
+
+            if ticker not in universe:
+
                 universe.insert(
                     0,
-                    favourite
+                    ticker
                 )
 
 
         results = []
 
 
-        progress = st.progress(0)
+        progress = st.progress(
+            0
+        )
 
         status = st.empty()
 
 
-        for index, ticker in enumerate(universe):
+        for index, ticker in enumerate(
+            universe
+        ):
 
             status.write(
                 f"Analyzing {ticker}..."
             )
 
-            analysis = analyze_stock(
+
+            result = analyze_stock(
                 ticker
             )
 
-            if analysis:
 
-                analysis["owned"] = (
-                    ticker in favourites
-                )
-
-                analysis["signal"] = get_signal(
-                    analysis["today"],
-                    analysis["swing"],
-                    analysis["owned"]
-                )
-
-                analysis["confidence"] = confidence(
-                    analysis["today"],
-                    analysis["swing"]
-                )
-
-                analysis["rank_score"] = (
-                    analysis["today"] * 0.55
-                    +
-                    analysis["swing"] * 0.45
-                )
+            if result:
 
                 results.append(
-                    analysis
+                    result
                 )
 
 
             progress.progress(
-                (index + 1)
+                (
+                    index + 1
+                )
                 /
-                len(universe)
+                len(
+                    universe
+                )
             )
 
 
-        status.empty()
-
         progress.empty()
+
+        status.empty()
 
 
         if not results:
 
             st.error(
-                "No scanner results were returned."
+                "No stocks could be analyzed."
             )
+
 
         else:
 
@@ -614,187 +1155,354 @@ with scanner_tab:
                 results
             )
 
+
             df = df.sort_values(
-                "rank_score",
+                "rank",
                 ascending=False
             )
 
 
-            # -------------------------------------------------
+            # =================================================
             # HOLDINGS
-            # -------------------------------------------------
+            # =================================================
 
-            owned_df = df[
-                df["owned"]
-            ]
-
-
-            if not owned_df.empty:
+            if holdings:
 
                 st.subheader(
-                    "My Holdings / Favourites"
+                    "My Holdings"
                 )
 
 
-                for _, row in owned_df.iterrows():
+                for ticker in holdings:
+
+                    row = df[
+                        df["ticker"]
+                        ==
+                        ticker
+                    ]
+
+
+                    if row.empty:
+                        continue
+
+
+                    row = row.iloc[0]
+
+
+                    if (
+                        row[
+                            "day_score"
+                        ]
+                        <= 40
+                        and
+                        row[
+                            "swing_score"
+                        ]
+                        <= 45
+                    ):
+
+                        holding_signal = (
+                            "SELL / REVIEW"
+                        )
+
+
+                    elif (
+                        row[
+                            "day_score"
+                        ]
+                        <= 45
+                        or
+                        row[
+                            "swing_score"
+                        ]
+                        <= 45
+                    ):
+
+                        holding_signal = (
+                            "HOLD — CAUTION"
+                        )
+
+
+                    elif (
+                        row[
+                            "day_score"
+                        ]
+                        >= 70
+                        or
+                        row[
+                            "swing_score"
+                        ]
+                        >= 70
+                    ):
+
+                        holding_signal = (
+                            "HOLD / ADD WATCH"
+                        )
+
+
+                    else:
+
+                        holding_signal = (
+                            "HOLD"
+                        )
+
 
                     st.markdown(
                         f"""
-### {row['ticker']} — {row['signal']}
+### {ticker} — {holding_signal}
 
-**Today:** {row['today']:.0%} probability UP  
-**Next 2–5 days:** {row['swing']:.0%} probability UP  
-**Confidence:** {row['confidence']}  
-**Latest price:** ${row['price']:,.2f}
+**Day Trade Score:** {row['day_score']}/100  
+**2–5 Day Score:** {row['swing_score']}/100  
+**Latest Price:** ${row['price']:,.2f}  
+**RSI:** {row['rsi']:.0f} — {row['rsi_label']}  
 """
                     )
 
 
-            # -------------------------------------------------
-            # TOP OPPORTUNITIES
-            # -------------------------------------------------
+            # =================================================
+            # WATCHLIST
+            # =================================================
+
+            if watchlist:
+
+                st.subheader(
+                    "My Watchlist"
+                )
+
+
+                for ticker in watchlist:
+
+                    row = df[
+                        df["ticker"]
+                        ==
+                        ticker
+                    ]
+
+
+                    if row.empty:
+                        continue
+
+
+                    row = row.iloc[0]
+
+
+                    st.markdown(
+                        f"""
+### {ticker}
+
+**Signal:** {row['signal']}  
+**Day Trade Score:** {row['day_score']}/100  
+**2–5 Day Score:** {row['swing_score']}/100  
+**RSI:** {row['rsi']:.0f} — {row['rsi_label']}
+"""
+                    )
+
+
+            # =================================================
+            # TOP DAY TRADE SETUPS
+            # =================================================
 
             st.subheader(
-                "Top TSX Opportunities"
+                "Top Day Trade Setups"
             )
 
 
-            display = df[
+            day_df = df.sort_values(
+                "day_score",
+                ascending=False
+            ).head(
+                10
+            )
+
+
+            display_day = day_df[
                 [
                     "ticker",
                     "company",
-                    "today",
-                    "swing",
+                    "day_score",
+                    "swing_score",
                     "signal",
-                    "confidence",
-                    "ret1",
-                    "ret5",
-                    "rsi"
+                    "rsi",
+                    "relative_volume"
                 ]
             ].copy()
 
 
-            display.columns = [
+            display_day.columns = [
                 "Ticker",
                 "Company",
-                "Today",
-                "2–5 Days",
+                "Day",
+                "2–5 Day",
                 "Signal",
-                "Confidence",
-                "1 Day",
-                "5 Days",
-                "RSI"
+                "RSI",
+                "Rel Volume"
             ]
 
 
-            display["Today"] = (
-                display["Today"]
-                .map(
-                    lambda x:
-                    f"{x:.0%}"
-                )
+            display_day[
+                "RSI"
+            ] = display_day[
+                "RSI"
+            ].map(
+                lambda x:
+                f"{x:.0f}"
             )
 
 
-            display["2–5 Days"] = (
-                display["2–5 Days"]
-                .map(
-                    lambda x:
-                    f"{x:.0%}"
-                )
-            )
-
-
-            display["1 Day"] = (
-                display["1 Day"]
-                .map(
-                    lambda x:
-                    f"{x:+.1%}"
-                )
-            )
-
-
-            display["5 Days"] = (
-                display["5 Days"]
-                .map(
-                    lambda x:
-                    f"{x:+.1%}"
-                )
-            )
-
-
-            display["RSI"] = (
-                display["RSI"]
-                .map(
-                    lambda x:
-                    f"{x:.0f}"
-                    if not np.isnan(x)
-                    else "—"
-                )
+            display_day[
+                "Rel Volume"
+            ] = display_day[
+                "Rel Volume"
+            ].map(
+                lambda x:
+                f"{x:.1f}x"
             )
 
 
             st.dataframe(
-                display,
+                display_day,
                 hide_index=True,
                 use_container_width=True
             )
 
 
-            # -------------------------------------------------
-            # BEST SETUP
-            # -------------------------------------------------
+            # =================================================
+            # TOP SWING SETUPS
+            # =================================================
 
-            best = df.iloc[0]
+            st.subheader(
+                "Top 2–5 Day Swing Setups"
+            )
+
+
+            swing_df = df.sort_values(
+                "swing_score",
+                ascending=False
+            ).head(
+                10
+            )
+
+
+            display_swing = swing_df[
+                [
+                    "ticker",
+                    "company",
+                    "swing_score",
+                    "day_score",
+                    "signal",
+                    "rsi",
+                    "ret5"
+                ]
+            ].copy()
+
+
+            display_swing.columns = [
+                "Ticker",
+                "Company",
+                "2–5 Day",
+                "Day",
+                "Signal",
+                "RSI",
+                "5-Day Move"
+            ]
+
+
+            display_swing[
+                "RSI"
+            ] = display_swing[
+                "RSI"
+            ].map(
+                lambda x:
+                f"{x:.0f}"
+            )
+
+
+            display_swing[
+                "5-Day Move"
+            ] = display_swing[
+                "5-Day Move"
+            ].map(
+                lambda x:
+                f"{x:+.1%}"
+            )
+
+
+            st.dataframe(
+                display_swing,
+                hide_index=True,
+                use_container_width=True
+            )
+
+
+            # =================================================
+            # BEST CURRENT SETUP
+            # =================================================
+
+            best = df.iloc[
+                0
+            ]
 
 
             st.subheader(
-                "Best current setup"
+                "Best Overall Setup"
             )
 
 
-            st.metric(
-                "Stock",
-                best["ticker"]
+            st.header(
+                best[
+                    "ticker"
+                ]
             )
 
 
-            a, b = st.columns(2)
-
-
-            a.metric(
-                "Today UP",
-                f"{best['today']:.0%}"
+            c1, c2 = st.columns(
+                2
             )
 
 
-            b.metric(
-                "Next 2–5 days UP",
-                f"{best['swing']:.0%}"
+            c1.metric(
+                "Day Trade Score",
+                f"{best['day_score']}/100"
+            )
+
+
+            c2.metric(
+                "2–5 Day Score",
+                f"{best['swing_score']}/100"
             )
 
 
             st.write(
-                f"**Model signal:** "
+                f"**Signal:** "
                 f"{best['signal']}"
             )
 
 
             st.write(
-                f"**Confidence:** "
-                f"{best['confidence']}"
+                f"**RSI:** "
+                f"{best['rsi']:.0f} "
+                f"— "
+                f"{best['rsi_label']}"
             )
 
 
-            if (
-                best["today"] < 0.59
-                and
-                best["swing"] < 0.60
-            ):
+            st.write(
+                f"**Relative Volume:** "
+                f"{best['relative_volume']:.1f}x"
+            )
 
-                st.warning(
-                    "No strong BUY setup was found. "
-                    "The model is not forcing a trade."
+
+            st.write(
+                "**Why it ranked highly:**"
+            )
+
+
+            for reason in best[
+                "reasons"
+            ]:
+
+                st.write(
+                    f"- {reason}"
                 )
 
 
@@ -804,15 +1512,10 @@ with scanner_tab:
 
 with stock_tab:
 
-    st.subheader(
-        "Analyze one stock"
-    )
-
-
     ticker = st.text_input(
-        "TSX ticker",
-        value="CNQ.TO",
-        key="single_stock"
+        "Ticker",
+        value="NVDA",
+        key="single"
     ).upper()
 
 
@@ -830,88 +1533,118 @@ with stock_tab:
             )
 
 
-        if result is None:
+        if not result:
 
             st.error(
                 "Not enough market data was available."
             )
 
+
         else:
 
-            owned = ticker in favourites
-
-
-            signal = get_signal(
-                result["today"],
-                result["swing"],
-                owned
-            )
-
-
             st.header(
-                signal
-            )
-
-
-            c1, c2 = st.columns(2)
-
-
-            c1.metric(
-                "Today — UP probability",
-                f"{result['today']:.0%}"
-            )
-
-
-            c2.metric(
-                "Next 2–5 days",
-                f"{result['swing']:.0%}"
-            )
-
-
-            st.metric(
-                "Latest price",
-                f"${result['price']:,.2f}"
+                result[
+                    "ticker"
+                ]
             )
 
 
             st.subheader(
-                "Current signals"
+                result[
+                    "signal"
+                ]
+            )
+
+
+            c1, c2 = st.columns(
+                2
+            )
+
+
+            c1.metric(
+                "Day Trade Score",
+                f"{result['day_score']}/100"
+            )
+
+
+            c2.metric(
+                "2–5 Day Score",
+                f"{result['swing_score']}/100"
+            )
+
+
+            st.metric(
+                "Latest Price",
+                f"${result['price']:,.2f}"
             )
 
 
             st.write(
-                f"""
-**1-day move:** {result['ret1']:+.2%}
-
-**5-day move:** {result['ret5']:+.2%}
-
-**20-day move:** {result['ret20']:+.2%}
-
-**RSI:** {result['rsi']:.0f}
-
-**TSX direction:** {result['market']:+.2%}
-
-**Sector direction:** {result['sector']:+.2%}
-"""
+                f"**RSI:** "
+                f"{result['rsi']:.0f} "
+                f"— "
+                f"{result['rsi_label']}"
             )
 
 
-            if owned:
+            st.write(
+                f"**Relative Volume:** "
+                f"{result['relative_volume']:.1f}x"
+            )
 
-                st.info(
-                    "This ticker is in your "
-                    "Holdings / Favourites list."
+
+            st.write(
+                f"**1-Day Move:** "
+                f"{result['ret1']:+.2%}"
+            )
+
+
+            st.write(
+                f"**5-Day Move:** "
+                f"{result['ret5']:+.2%}"
+            )
+
+
+            st.write(
+                f"**20-Day Move:** "
+                f"{result['ret20']:+.2%}"
+            )
+
+
+            st.write(
+                f"**Market Direction:** "
+                f"{result['market_move']:+.2%}"
+            )
+
+
+            st.write(
+                f"**Sector Direction:** "
+                f"{result['sector_move']:+.2%}"
+            )
+
+
+            st.subheader(
+                "Why"
+            )
+
+
+            for reason in result[
+                "reasons"
+            ]:
+
+                st.write(
+                    f"- {reason}"
                 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # FOOTER
-# ---------------------------------------------------------
+# =========================================================
 
 st.divider()
 
 st.caption(
-    "Best used as an early-morning screening tool. "
-    "Market conditions can change quickly after the open. "
-    "Confirm important news and use your own risk limits before trading."
+    "Best used before the market opens and again shortly after the open. "
+    "Scores are screening indicators, not guaranteed predictions. "
+    "Free market data may be delayed."
 )
