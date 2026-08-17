@@ -13,7 +13,7 @@ except Exception:
 
 
 # ============================================================
-# PAGE
+# PAGE SETUP
 # ============================================================
 
 st.set_page_config(
@@ -25,11 +25,11 @@ st.set_page_config(
 st.title("Live Market Trader")
 
 st.caption(
-    "Scanner • trade plan • EOD forecast • watchlist • prediction scorecard"
+    "Scanner • trade plan • EOD forecast • holdings/watchlist • prediction tracker"
 )
 
 st.warning(
-    "Signals, forecasts and trade levels are model estimates for research. "
+    "Signals, forecasts and trade levels are model estimates for research only. "
     "They are not guaranteed outcomes or personalized investment advice."
 )
 
@@ -64,10 +64,6 @@ SESSION, SESSION_LABEL = session_mode()
 
 
 def regular_session_fraction():
-    """
-    0.0 at 9:30 ET
-    1.0 at 4:00 ET
-    """
     current = now_et()
 
     if SESSION == "PREMARKET":
@@ -97,15 +93,16 @@ def regular_session_fraction():
     elapsed = (current - start).total_seconds()
 
     return float(
-        max(
+        np.clip(
+            elapsed / total,
             0.0,
-            min(1.0, elapsed / total),
+            1.0,
         )
     )
 
 
 # ============================================================
-# UNIVERSES
+# CANADIAN ETFs
 # ============================================================
 
 CANADIAN_ETFS = {
@@ -122,6 +119,11 @@ CANADIAN_ETFS = {
     "ZAG": "BMO Aggregate Bond Index ETF",
     "VAB": "Vanguard Canadian Aggregate Bond Index ETF",
 }
+
+
+# ============================================================
+# TSX STOCKS
+# ============================================================
 
 TSX = {
     "RY.TO": "Royal Bank",
@@ -156,6 +158,11 @@ TSX = {
     "L.TO": "Loblaw",
 }
 
+
+# ============================================================
+# S&P 500 WATCH UNIVERSE
+# ============================================================
+
 SP500 = {
     "AAPL": "Apple",
     "MSFT": "Microsoft",
@@ -184,6 +191,11 @@ SP500 = {
     "PLTR": "Palantir",
 }
 
+
+# ============================================================
+# NASDAQ WATCH UNIVERSE
+# ============================================================
+
 NASDAQ = {
     "AAPL": "Apple",
     "MSFT": "Microsoft",
@@ -210,6 +222,7 @@ NASDAQ = {
     "MSTR": "Strategy",
     "ARM": "Arm Holdings",
 }
+
 
 ALL_NAMES = {}
 ALL_NAMES.update(TSX)
@@ -257,7 +270,7 @@ def market_index(ticker):
 
 
 # ============================================================
-# MARKET DATA
+# DATA
 # ============================================================
 
 @st.cache_data(ttl=600)
@@ -318,9 +331,70 @@ def get_series(df, column):
     )
 
 
+# ============================================================
+# INDICATORS
+# ============================================================
+
+def calculate_rsi(close, period=14):
+    change = close.diff()
+
+    gains = (
+        change
+        .clip(lower=0)
+        .rolling(period)
+        .mean()
+    )
+
+    losses = (
+        -change
+        .clip(upper=0)
+        .rolling(period)
+        .mean()
+    )
+
+    rs = gains / losses.replace(
+        0,
+        np.nan,
+    )
+
+    return 100 - (
+        100 / (1 + rs)
+    )
+
+
+def calculate_atr(df, period=14):
+    high = get_series(df, "High")
+    low = get_series(df, "Low")
+    close = get_series(df, "Close")
+
+    previous_close = close.shift(1)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - previous_close).abs(),
+            (low - previous_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    return (
+        true_range
+        .rolling(period)
+        .mean()
+    )
+
+
 def latest_move(ticker):
-    data = daily_data(ticker, "1mo")
-    close = get_series(data, "Close").dropna()
+    data = daily_data(
+        ticker,
+        "1mo",
+    )
+
+    close = get_series(
+        data,
+        "Close",
+    ).dropna()
 
     if len(close) < 2:
         return 0.0
@@ -332,13 +406,57 @@ def latest_move(ticker):
     )
 
 
+def calculate_vwap(ticker):
+    data = intraday_data(
+        ticker
+    )
+
+    if data.empty:
+        return None
+
+    high = get_series(data, "High")
+    low = get_series(data, "Low")
+    close = get_series(data, "Close")
+    volume = get_series(data, "Volume")
+
+    cumulative_volume = volume.cumsum()
+
+    if (
+        len(close) == 0
+        or len(cumulative_volume) == 0
+        or cumulative_volume.iloc[-1] <= 0
+    ):
+        return None
+
+    typical_price = (
+        high
+        + low
+        + close
+    ) / 3
+
+    vwap = (
+        (typical_price * volume).cumsum()
+        / cumulative_volume
+    )
+
+    return float(
+        vwap.iloc[-1]
+    )
+
+
 # ============================================================
-# PRICE
+# CURRENT PRICE
 # ============================================================
 
 def price_info(ticker):
-    intra = intraday_data(ticker)
-    daily = daily_data(ticker, "1mo")
+    intra = intraday_data(
+        ticker
+    )
+
+    daily = daily_data(
+        ticker,
+        "1mo",
+    )
 
     daily_close = get_series(
         daily,
@@ -346,7 +464,9 @@ def price_info(ticker):
     ).dropna()
 
     previous_close = (
-        float(daily_close.iloc[-1])
+        float(
+            daily_close.iloc[-1]
+        )
         if len(daily_close)
         else None
     )
@@ -371,7 +491,9 @@ def price_info(ticker):
                 label = "Latest available"
 
             return (
-                float(intra_close.iloc[-1]),
+                float(
+                    intra_close.iloc[-1]
+                ),
                 label,
                 previous_close,
             )
@@ -384,88 +506,10 @@ def price_info(ticker):
 
 
 # ============================================================
-# INDICATORS
-# ============================================================
-
-def calculate_rsi(close, period=14):
-    change = close.diff()
-
-    gains = (
-        change
-        .clip(lower=0)
-        .rolling(period)
-        .mean()
-    )
-
-    losses = (
-        -change
-        .clip(upper=0)
-        .rolling(period)
-        .mean()
-    )
-
-    rs = gains / losses.replace(0, np.nan)
-
-    return 100 - (100 / (1 + rs))
-
-
-def calculate_atr(df, period=14):
-    high = get_series(df, "High")
-    low = get_series(df, "Low")
-    close = get_series(df, "Close")
-
-    previous_close = close.shift(1)
-
-    true_range = pd.concat(
-        [
-            high - low,
-            (high - previous_close).abs(),
-            (low - previous_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-
-    return true_range.rolling(period).mean()
-
-
-def calculate_vwap(ticker):
-    data = intraday_data(ticker)
-
-    if data.empty:
-        return None
-
-    high = get_series(data, "High")
-    low = get_series(data, "Low")
-    close = get_series(data, "Close")
-    volume = get_series(data, "Volume")
-
-    cumulative_volume = volume.cumsum()
-
-    if (
-        len(close) == 0
-        or len(cumulative_volume) == 0
-        or cumulative_volume.iloc[-1] <= 0
-    ):
-        return None
-
-    typical_price = (
-        high + low + close
-    ) / 3
-
-    vwap = (
-        (typical_price * volume).cumsum()
-        / cumulative_volume
-    )
-
-    return float(vwap.iloc[-1])
-
-
-# ============================================================
 # EOD FORECAST
 # ============================================================
 
 def make_eod_forecast(
-    ticker,
     current,
     previous_close,
     close,
@@ -476,13 +520,11 @@ def make_eod_forecast(
     quality_score,
     vwap,
 ):
-    """
-    Heuristic end-of-day / next-session close estimate.
-
-    This is NOT a guaranteed price target.
-    The important part is that the forecast is saved before the
-    actual closing price is known and later scored against reality.
-    """
+    if (
+        previous_close is None
+        or previous_close <= 0
+    ):
+        previous_close = current
 
     ret1 = float(
         close.pct_change(1).iloc[-1]
@@ -496,9 +538,6 @@ def make_eod_forecast(
         close.pct_change(5).iloc[-1]
     )
 
-    if previous_close is None or previous_close <= 0:
-        previous_close = current
-
     current_move = (
         current / previous_close
         - 1
@@ -511,7 +550,9 @@ def make_eod_forecast(
         .std()
     )
 
-    if pd.isna(daily_volatility):
+    if pd.isna(
+        daily_volatility
+    ):
         daily_volatility = 0.015
 
     atr_pct = (
@@ -520,7 +561,6 @@ def make_eod_forecast(
         else 0.02
     )
 
-    # Historical momentum expectation
     momentum_expectation = (
         0.30 * ret1
         + 0.20 * (ret3 / 3)
@@ -528,14 +568,12 @@ def make_eod_forecast(
         + 0.20 * market_move
     )
 
-    # RSI contribution
     rsi_bias = (
         (rsi_value - 50)
         / 50
         * 0.0035
     )
 
-    # VWAP contribution
     vwap_bias = 0.0
 
     if (
@@ -574,40 +612,37 @@ def make_eod_forecast(
         )
     )
 
-    elapsed = regular_session_fraction()
+    elapsed = (
+        regular_session_fraction()
+    )
 
     if SESSION == "REGULAR":
-        # As we approach 4 PM, today's actual move becomes more
-        # important than the historical forecast.
-        predicted_session_return = (
+        expected_return = (
             elapsed * current_move
-            + (1 - elapsed) * base_expected_move
+            + (1 - elapsed)
+            * base_expected_move
         )
 
-    elif SESSION == "AFTERHOURS":
-        # After close, this becomes a next-session estimate.
-        predicted_session_return = base_expected_move
-
-    elif SESSION == "WEEKEND":
-        predicted_session_return = base_expected_move
-
-    else:
-        # Premarket
-        predicted_session_return = (
+    elif SESSION == "PREMARKET":
+        expected_return = (
             0.20 * current_move
             + 0.80 * base_expected_move
+        )
+
+    else:
+        expected_return = (
+            base_expected_move
         )
 
     predicted_close = (
         previous_close
         * (
             1
-            + predicted_session_return
+            + expected_return
         )
     )
 
-    # Prevent extreme unrealistic forecast jumps.
-    cap = max(
+    movement_cap = max(
         atr_value * 1.50,
         current * 0.01,
     )
@@ -615,24 +650,26 @@ def make_eod_forecast(
     predicted_close = float(
         np.clip(
             predicted_close,
-            current - cap,
-            current + cap,
+            current - movement_cap,
+            current + movement_cap,
         )
     )
 
-    remaining_fraction = (
-        max(
+    if SESSION == "REGULAR":
+        remaining_fraction = max(
             0.10,
             1 - elapsed,
         )
-        if SESSION == "REGULAR"
-        else 1.0
-    )
+
+    else:
+        remaining_fraction = 1.0
 
     uncertainty = max(
-        atr_value * (
+        atr_value
+        * (
             0.30
-            + 0.55 * remaining_fraction
+            + 0.55
+            * remaining_fraction
         ),
         current
         * daily_volatility
@@ -641,7 +678,8 @@ def make_eod_forecast(
 
     forecast_low = max(
         0.01,
-        predicted_close - uncertainty,
+        predicted_close
+        - uncertainty,
     )
 
     forecast_high = (
@@ -650,7 +688,9 @@ def make_eod_forecast(
     )
 
     score_strength = (
-        abs(day_score - 50)
+        abs(
+            day_score - 50
+        )
         / 50
     )
 
@@ -677,19 +717,19 @@ def make_eod_forecast(
         )
     )
 
-    predicted_move_from_current = (
+    predicted_move = (
         predicted_close / current
         - 1
     )
 
-    if predicted_close > current * 1.001:
-        eod_direction = "UP"
+    if predicted_move > 0.001:
+        direction = "UP"
 
-    elif predicted_close < current * 0.999:
-        eod_direction = "DOWN"
+    elif predicted_move < -0.001:
+        direction = "DOWN"
 
     else:
-        eod_direction = "FLAT"
+        direction = "FLAT"
 
     return {
         "eod_predicted_close":
@@ -705,15 +745,15 @@ def make_eod_forecast(
             confidence,
 
         "eod_predicted_move":
-            float(predicted_move_from_current),
+            float(predicted_move),
 
         "eod_direction":
-            eod_direction,
+            direction,
     }
 
 
 # ============================================================
-# ANALYSIS
+# MAIN ANALYSIS
 # ============================================================
 
 def analyze(raw_ticker):
@@ -760,10 +800,29 @@ def analyze(raw_ticker):
     if current is None:
         return None
 
-    ret1 = close.pct_change(1).iloc[-1]
-    ret3 = close.pct_change(3).iloc[-1]
-    ret5 = close.pct_change(5).iloc[-1]
-    ret20 = close.pct_change(20).iloc[-1]
+    ret1 = (
+        close
+        .pct_change(1)
+        .iloc[-1]
+    )
+
+    ret3 = (
+        close
+        .pct_change(3)
+        .iloc[-1]
+    )
+
+    ret5 = (
+        close
+        .pct_change(5)
+        .iloc[-1]
+    )
+
+    ret20 = (
+        close
+        .pct_change(20)
+        .iloc[-1]
+    )
 
     ma5 = (
         close
@@ -787,7 +846,9 @@ def analyze(raw_ticker):
     )
 
     rsi_value = (
-        calculate_rsi(close)
+        calculate_rsi(
+            close
+        )
         .iloc[-1]
     )
 
@@ -871,7 +932,9 @@ def analyze(raw_ticker):
     elif rsi_value >= 73:
         day_score -= 4
 
-    if is_canadian_etf(ticker):
+    if is_canadian_etf(
+        ticker
+    ):
         day_score = (
             50
             + (
@@ -943,7 +1006,9 @@ def analyze(raw_ticker):
     if rsi_value >= 80:
         swing_score -= 8
 
-    if is_canadian_etf(ticker):
+    if is_canadian_etf(
+        ticker
+    ):
         swing_score = (
             50
             + (
@@ -991,6 +1056,7 @@ def analyze(raw_ticker):
     ):
         if current >= vwap:
             quality_score += 10
+
         else:
             quality_score -= 10
 
@@ -1098,7 +1164,9 @@ def analyze(raw_ticker):
     )
 
     target2 = max(
-        resistance + atr_value,
+        resistance
+        + atr_value,
+
         entry_mid
         + 2.2 * risk,
     )
@@ -1114,7 +1182,7 @@ def analyze(raw_ticker):
     ) / risk
 
     # ========================================================
-    # ACTION
+    # SIGNAL
     # ========================================================
 
     if rsi_value >= 80:
@@ -1141,7 +1209,9 @@ def analyze(raw_ticker):
         )
 
     elif rr1 < 1.5:
-        action = "WAIT — POOR RISK/REWARD"
+        action = (
+            "WAIT — POOR RISK/REWARD"
+        )
 
         prediction = (
             "UP"
@@ -1153,29 +1223,40 @@ def analyze(raw_ticker):
         day_score >= 75
         and quality_score >= 70
     ):
-        action = "BUY SETUP / ENTRY FAVOURABLE"
+        action = (
+            "BUY SETUP / ENTRY FAVOURABLE"
+        )
+
         prediction = "UP"
 
     elif (
         day_score >= 65
         or swing_score >= 70
     ):
-        action = "WATCH FOR ENTRY"
+        action = (
+            "WATCH FOR ENTRY"
+        )
+
         prediction = "UP"
 
     elif (
         day_score <= 40
         and swing_score <= 45
     ):
-        action = "AVOID / SELL REVIEW"
+        action = (
+            "AVOID / SELL REVIEW"
+        )
+
         prediction = "DOWN"
 
     else:
-        action = "NO CLEAR ENTRY"
+        action = (
+            "NO CLEAR ENTRY"
+        )
+
         prediction = "NEUTRAL"
 
     eod = make_eod_forecast(
-        ticker=ticker,
         current=current,
         previous_close=previous_close,
         close=close,
@@ -1188,7 +1269,8 @@ def analyze(raw_ticker):
     )
 
     result = {
-        "ticker": ticker,
+        "ticker":
+            ticker,
 
         "name":
             ALL_NAMES.get(
@@ -1261,7 +1343,9 @@ def analyze(raw_ticker):
             ),
     }
 
-    result.update(eod)
+    result.update(
+        eod
+    )
 
     return result
 
@@ -1330,14 +1414,17 @@ def prediction_trade_date():
         + timedelta(days=1)
     )
 
-    while next_date.weekday() >= 5:
+    while (
+        next_date.weekday()
+        >= 5
+    ):
         next_date += timedelta(days=1)
 
     return next_date
 
 
 # ============================================================
-# DATABASE
+# DATABASE FUNCTIONS
 # ============================================================
 
 def fetch_predictions():
@@ -1356,7 +1443,10 @@ def fetch_predictions():
                 .execute()
             )
 
-            return response.data or []
+            return (
+                response.data
+                or []
+            )
 
         except Exception as error:
             st.error(
@@ -1374,12 +1464,20 @@ def already_tracked(
     ticker,
     trade_date,
 ):
-    for row in fetch_predictions():
+    rows = fetch_predictions()
+
+    for row in rows:
         if (
-            row.get("ticker") == ticker
+            row.get(
+                "ticker"
+            ) == ticker
             and str(
-                row.get("trade_date")
-            ) == str(trade_date)
+                row.get(
+                    "trade_date"
+                )
+            ) == str(
+                trade_date
+            )
         ):
             return True
 
@@ -1520,13 +1618,18 @@ def save_prediction(result):
             return "error"
 
     existing_ids = [
-        item.get("id", 0)
+        item.get(
+            "id",
+            0,
+        )
         for item
         in st.session_state.predictions
     ]
 
     row["id"] = (
-        max(existing_ids or [0])
+        max(
+            existing_ids or [0]
+        )
         + 1
     )
 
@@ -1537,7 +1640,9 @@ def save_prediction(result):
     return "temporary"
 
 
-def remove_prediction(row_id):
+def remove_prediction(
+    row_id
+):
     if PERSISTENT_STORAGE:
         try:
             (
@@ -1566,7 +1671,9 @@ def remove_prediction(row_id):
         row
         for row
         in st.session_state.predictions
-        if row.get("id") != row_id
+        if row.get(
+            "id"
+        ) != row_id
     ]
 
     return True
@@ -1576,7 +1683,9 @@ def clear_all_predictions():
     if PERSISTENT_STORAGE:
         try:
             for row in fetch_predictions():
-                row_id = row.get("id")
+                row_id = row.get(
+                    "id"
+                )
 
                 if row_id is not None:
                     (
@@ -1617,7 +1726,9 @@ def update_prediction(
                 .table(
                     "prediction_tracker"
                 )
-                .update(values)
+                .update(
+                    values
+                )
                 .eq(
                     "id",
                     row_id,
@@ -1634,9 +1745,15 @@ def update_prediction(
 
             return
 
-    for row in st.session_state.predictions:
-        if row.get("id") == row_id:
-            row.update(values)
+    for row in (
+        st.session_state.predictions
+    ):
+        if row.get(
+            "id"
+        ) == row_id:
+            row.update(
+                values
+            )
 
 
 # ============================================================
@@ -1645,8 +1762,9 @@ def update_prediction(
 
 def settle_prediction(row):
     if (
-        row.get("result_status")
-        == "CLOSED"
+        row.get(
+            "result_status"
+        ) == "CLOSED"
     ):
         return row
 
@@ -1660,7 +1778,9 @@ def settle_prediction(row):
 
     target_date = (
         pd.to_datetime(
-            row["trade_date"]
+            row[
+                "trade_date"
+            ]
         )
         .date()
     )
@@ -1678,7 +1798,10 @@ def settle_prediction(row):
         in enumerate(
             available_dates
         )
-        if available_date >= target_date
+        if (
+            available_date
+            >= target_date
+        )
     ]
 
     if not positions:
@@ -1687,10 +1810,11 @@ def settle_prediction(row):
     position = positions[0]
 
     actual_date = (
-        available_dates[position]
+        available_dates[
+            position
+        ]
     )
 
-    # Don't close today's forecast before today's session is over.
     if (
         actual_date
         == now_et().date()
@@ -1707,15 +1831,23 @@ def settle_prediction(row):
     ]
 
     def scalar(column):
-        value = daily_row[column]
+        value = (
+            daily_row[
+                column
+            ]
+        )
 
         if isinstance(
             value,
             pd.Series,
         ):
-            value = value.iloc[0]
+            value = (
+                value.iloc[0]
+            )
 
-        return float(value)
+        return float(
+            value
+        )
 
     close_price = scalar(
         "Close"
@@ -1733,18 +1865,20 @@ def settle_prediction(row):
         row["start_price"]
     )
 
-    prediction = row[
-        "prediction"
-    ]
+    prediction = (
+        row["prediction"]
+    )
 
     if prediction == "UP":
         direction_correct = (
-            close_price > start_price
+            close_price
+            > start_price
         )
 
     elif prediction == "DOWN":
         direction_correct = (
-            close_price < start_price
+            close_price
+            < start_price
         )
 
     else:
@@ -1759,7 +1893,9 @@ def settle_prediction(row):
 
     if (
         predicted_close is not None
-        and float(predicted_close) > 0
+        and float(
+            predicted_close
+        ) > 0
     ):
         predicted_close = float(
             predicted_close
@@ -1790,9 +1926,13 @@ def settle_prediction(row):
         and range_high is not None
     ):
         eod_range_hit = (
-            float(range_low)
+            float(
+                range_low
+            )
             <= close_price
-            <= float(range_high)
+            <= float(
+                range_high
+            )
         )
 
     values = {
@@ -1812,7 +1952,9 @@ def settle_prediction(row):
             (
                 day_low
                 <= float(
-                    row["stop_price"]
+                    row[
+                        "stop_price"
+                    ]
                 )
             ),
 
@@ -1820,7 +1962,9 @@ def settle_prediction(row):
             (
                 day_high
                 >= float(
-                    row["target1"]
+                    row[
+                        "target1"
+                    ]
                 )
             ),
 
@@ -1828,7 +1972,9 @@ def settle_prediction(row):
             (
                 day_high
                 >= float(
-                    row["target2"]
+                    row[
+                        "target2"
+                    ]
                 )
             ),
 
@@ -1850,7 +1996,9 @@ def settle_prediction(row):
         values,
     )
 
-    row.update(values)
+    row.update(
+        values
+    )
 
     return row
 
@@ -1859,12 +2007,16 @@ def settle_prediction(row):
 # DISPLAY
 # ============================================================
 
-def show_eod_forecast(result):
+def show_eod_forecast(
+    result
+):
     st.subheader(
         "End-of-Day Forecast"
     )
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(
+        2
+    )
 
     col1.metric(
         "Predicted close",
@@ -1878,14 +2030,19 @@ def show_eod_forecast(result):
     )
 
     st.write(
-        f"**Expected direction:** "
-        f"{result['eod_direction']}"
+        f"Expected direction: "
+        f"**{result['eod_direction']}**"
     )
 
     st.write(
-        f"**Likely closing range:** "
-        f"${result['eod_range_low']:.2f} – "
-        f"${result['eod_range_high']:.2f}"
+        f"Predicted move from current price: "
+        f"**{result['eod_predicted_move']:+.2%}**"
+    )
+
+    st.write(
+        f"Likely closing range: "
+        f"**${result['eod_range_low']:.2f} – "
+        f"${result['eod_range_high']:.2f}**"
     )
 
     if SESSION in [
@@ -1893,20 +2050,22 @@ def show_eod_forecast(result):
         "WEEKEND",
     ]:
         st.caption(
-            "Market is closed, so this is effectively a forecast "
-            "for the next trading session."
+            "The market is closed, so this forecast applies to the next trading session."
         )
 
     else:
         st.caption(
-            "The forecast can change during the day as price, "
-            "volume, VWAP and momentum change."
+            "The forecast can change during the day as price, VWAP, volume and momentum change."
         )
 
 
-def show_trade(result):
+def show_trade(
+    result
+):
     st.subheader(
-        result["action"]
+        result[
+            "action"
+        ]
     )
 
     st.metric(
@@ -1954,7 +2113,7 @@ def show_trade(result):
     )
 
     st.write(
-        f"Prediction: "
+        f"Direction prediction: "
         f"**{result['prediction']}**"
     )
 
@@ -1977,8 +2136,7 @@ def track_button(
         trade_date,
     ):
         st.success(
-            f"Tracked ✓ for "
-            f"{trade_date}"
+            f"Tracked ✓ for {trade_date}"
         )
 
         return
@@ -2056,15 +2214,21 @@ watchlist_text = st.text_input(
     value=saved_watchlist,
 )
 
+
 holdings = [
-    normalize_ticker(item)
+    normalize_ticker(
+        item
+    )
     for item
     in holdings_text.split(",")
     if item.strip()
 ]
 
+
 watchlist = [
-    normalize_ticker(item)
+    normalize_ticker(
+        item
+    )
     for item
     in watchlist_text.split(",")
     if item.strip()
@@ -2139,13 +2303,19 @@ with scan_tab:
         use_container_width=True,
     ):
         if market_choice == "TSX":
-            universe = list(TSX)
+            universe = list(
+                TSX
+            )
 
         elif market_choice == "S&P 500":
-            universe = list(SP500)
+            universe = list(
+                SP500
+            )
 
         elif market_choice == "Nasdaq-100":
-            universe = list(NASDAQ)
+            universe = list(
+                NASDAQ
+            )
 
         elif market_choice == "Canadian ETFs":
             universe = [
@@ -2168,10 +2338,13 @@ with scan_tab:
                 )
             )
 
-        universe = universe[:count]
+        universe = universe[
+            :count
+        ]
 
         for ticker in (
-            holdings + watchlist
+            holdings
+            + watchlist
         ):
             if ticker not in universe:
                 universe.insert(
@@ -2181,7 +2354,10 @@ with scan_tab:
 
         results = []
 
-        progress = st.progress(0)
+        progress = st.progress(
+            0
+        )
+
         status = st.empty()
 
         for index, ticker in enumerate(
@@ -2201,7 +2377,9 @@ with scan_tab:
                 )
 
             progress.progress(
-                (index + 1)
+                (
+                    index + 1
+                )
                 / len(universe)
             )
 
@@ -2364,8 +2542,7 @@ with my_tab:
                     saved_count += 1
 
             st.success(
-                f"Saved {saved_count} "
-                f"watchlist prediction(s). "
+                f"Saved {saved_count} watchlist prediction(s). "
                 f"{duplicate_count} already tracked."
             )
 
@@ -2532,27 +2709,26 @@ with tracker_tab:
                 "result_status"
             )
 
-            result = settle_prediction(
+            updated = settle_prediction(
                 row
             )
 
             if (
                 before != "CLOSED"
-                and result.get(
+                and updated.get(
                     "result_status"
                 ) == "CLOSED"
             ):
                 updated_count += 1
 
         st.success(
-            f"Updated "
-            f"{updated_count} prediction(s)."
+            f"Updated {updated_count} prediction(s)."
         )
 
         rows = fetch_predictions()
 
     # ========================================================
-    # CLOSED
+    # COMPLETED PREDICTIONS
     # ========================================================
 
     closed = [
@@ -2565,11 +2741,15 @@ with tracker_tab:
     ]
 
     # ========================================================
-    # OVERALL STATS
+    # PERFORMANCE DASHBOARD
     # ========================================================
 
     if closed:
-        scored = [
+        st.subheader(
+            "Model Performance"
+        )
+
+        scored_direction = [
             row
             for row
             in closed
@@ -2578,19 +2758,21 @@ with tracker_tab:
             ) is not None
         ]
 
-        correct = sum(
+        direction_correct_count = sum(
             1
             for row
-            in scored
+            in scored_direction
             if row.get(
                 "direction_correct"
             ) is True
         )
 
         directional_accuracy = (
-            correct
-            / len(scored)
-            if scored
+            direction_correct_count
+            / len(
+                scored_direction
+            )
+            if scored_direction
             else None
         )
 
@@ -2603,15 +2785,37 @@ with tracker_tab:
             ) is not None
         ]
 
-        mean_eod_error = (
-            np.mean(
-                [
-                    float(
-                        row["eod_error_pct"]
-                    )
-                    for row
-                    in eod_scored
-                ]
+        average_eod_error_pct = (
+            float(
+                np.mean(
+                    [
+                        float(
+                            row[
+                                "eod_error_pct"
+                            ]
+                        )
+                        for row
+                        in eod_scored
+                    ]
+                )
+            )
+            if eod_scored
+            else None
+        )
+
+        average_eod_error_dollars = (
+            float(
+                np.mean(
+                    [
+                        float(
+                            row[
+                                "eod_error_abs"
+                            ]
+                        )
+                        for row
+                        in eod_scored
+                    ]
+                )
             )
             if eod_scored
             else None
@@ -2626,28 +2830,60 @@ with tracker_tab:
             ) is not None
         ]
 
-        range_hits = sum(
-            bool(
-                row.get(
-                    "eod_range_hit"
-                )
-            )
+        range_hit_count = sum(
+            1
             for row
             in range_scored
+            if row.get(
+                "eod_range_hit"
+            ) is True
         )
 
-        range_accuracy = (
-            range_hits
-            / len(range_scored)
+        range_hit_rate = (
+            range_hit_count
+            / len(
+                range_scored
+            )
             if range_scored
             else None
         )
 
-        col1, col2 = st.columns(2)
+        target1_hits = sum(
+            1
+            for row
+            in closed
+            if row.get(
+                "target1_hit"
+            ) is True
+        )
+
+        target2_hits = sum(
+            1
+            for row
+            in closed
+            if row.get(
+                "target2_hit"
+            ) is True
+        )
+
+        stop_hits = sum(
+            1
+            for row
+            in closed
+            if row.get(
+                "stop_hit"
+            ) is True
+        )
+
+        col1, col2 = st.columns(
+            2
+        )
 
         col1.metric(
-            "Closed",
-            len(closed),
+            "Completed forecasts",
+            len(
+                closed
+            ),
         )
 
         col2.metric(
@@ -2660,55 +2896,69 @@ with tracker_tab:
             ),
         )
 
-        col3, col4 = st.columns(2)
+        col3, col4 = st.columns(
+            2
+        )
 
         col3.metric(
             "Avg EOD error",
             (
-                f"{mean_eod_error:.2%}"
-                if mean_eod_error
+                f"${average_eod_error_dollars:.2f}"
+                if average_eod_error_dollars
                 is not None
                 else "—"
             ),
         )
 
         col4.metric(
-            "EOD range hit",
+            "Avg EOD error %",
             (
-                f"{range_accuracy:.1%}"
-                if range_accuracy
+                f"{average_eod_error_pct:.2%}"
+                if average_eod_error_pct
                 is not None
                 else "—"
             ),
         )
 
-        col5, col6 = st.columns(2)
+        col5, col6 = st.columns(
+            2
+        )
 
         col5.metric(
-            "Target 1 hits",
-            sum(
-                bool(
-                    row.get(
-                        "target1_hit"
-                    )
-                )
-                for row
-                in closed
+            "Forecast range hit",
+            (
+                f"{range_hit_rate:.1%}"
+                if range_hit_rate
+                is not None
+                else "—"
             ),
         )
 
         col6.metric(
-            "Stops hit",
-            sum(
-                bool(
-                    row.get(
-                        "stop_hit"
-                    )
-                )
-                for row
-                in closed
-            ),
+            "Target 1 hits",
+            target1_hits,
         )
+
+        col7, col8 = st.columns(
+            2
+        )
+
+        col7.metric(
+            "Target 2 hits",
+            target2_hits,
+        )
+
+        col8.metric(
+            "Stops hit",
+            stop_hits,
+        )
+
+        if len(closed) < 20:
+            st.info(
+                f"Only {len(closed)} completed prediction(s) so far. "
+                "Treat the accuracy statistics as preliminary until "
+                "there are at least 20–30 completed forecasts."
+            )
 
     if not rows:
         st.info(
@@ -2716,7 +2966,7 @@ with tracker_tab:
         )
 
     # ========================================================
-    # INDIVIDUAL ROWS
+    # INDIVIDUAL PREDICTIONS
     # ========================================================
 
     for index, row in enumerate(
@@ -2768,6 +3018,10 @@ with tracker_tab:
                 f"**{row['action']}**"
             )
 
+            # =================================================
+            # SAVED EOD FORECAST
+            # =================================================
+
             st.subheader(
                 "Saved EOD Forecast"
             )
@@ -2776,41 +3030,55 @@ with tracker_tab:
                 "eod_predicted_close"
             )
 
+            predicted_move = row.get(
+                "eod_predicted_move"
+            )
+
             if predicted_close is not None:
                 st.write(
                     f"Predicted close: "
                     f"**${float(predicted_close):.2f}**"
                 )
 
+            if predicted_move is not None:
+                st.write(
+                    f"Predicted move: "
+                    f"**{float(predicted_move):+.2%}**"
+                )
+
+            range_low = row.get(
+                "eod_range_low"
+            )
+
+            range_high = row.get(
+                "eod_range_high"
+            )
+
             if (
-                row.get(
-                    "eod_range_low"
-                ) is not None
-                and row.get(
-                    "eod_range_high"
-                ) is not None
+                range_low is not None
+                and range_high is not None
             ):
                 st.write(
                     f"Predicted range: "
-                    f"**${float(row['eod_range_low']):.2f} "
-                    f"– "
-                    f"${float(row['eod_range_high']):.2f}**"
+                    f"**${float(range_low):.2f} – "
+                    f"${float(range_high):.2f}**"
                 )
 
-            if row.get(
+            confidence = row.get(
                 "eod_confidence"
-            ) is not None:
+            )
+
+            if confidence is not None:
                 st.write(
                     f"EOD confidence: "
-                    f"**{int(row['eod_confidence'])}%**"
+                    f"**{int(confidence)}%**"
                 )
 
             st.divider()
 
             st.write(
                 f"Buy zone: "
-                f"**${float(row['entry_low']):.2f} "
-                f"– "
+                f"**${float(row['entry_low']):.2f} – "
                 f"${float(row['entry_high']):.2f}**"
             )
 
@@ -2828,6 +3096,10 @@ with tracker_tab:
                 f"Target 2: "
                 f"**${float(row['target2']):.2f}**"
             )
+
+            # =================================================
+            # REMOVE
+            # =================================================
 
             row_id = row.get(
                 "id"
@@ -2861,14 +3133,18 @@ with tracker_tab:
                 ) == "CLOSED"
             ):
                 close_price = float(
-                    row["close_price"]
+                    row[
+                        "close_price"
+                    ]
                 )
 
                 start_price = float(
-                    row["start_price"]
+                    row[
+                        "start_price"
+                    ]
                 )
 
-                change = (
+                actual_change = (
                     close_price
                     / start_price
                     - 1
@@ -2881,22 +3157,22 @@ with tracker_tab:
                 )
 
                 st.write(
-                    f"Closing price: "
+                    f"Actual closing price: "
                     f"**${close_price:.2f}**"
                 )
 
                 st.write(
-                    f"Start-to-close change: "
-                    f"**{change:+.2%}**"
+                    f"Actual move: "
+                    f"**{actual_change:+.2%}**"
                 )
 
                 st.write(
-                    f"Day High: "
+                    f"Day high: "
                     f"**${float(row['day_high']):.2f}**"
                 )
 
                 st.write(
-                    f"Day Low: "
+                    f"Day low: "
                     f"**${float(row['day_low']):.2f}**"
                 )
 
@@ -2920,20 +3196,21 @@ with tracker_tab:
 
                 else:
                     st.info(
-                        "Neutral prediction — not scored."
+                        "Neutral direction prediction — not scored."
                     )
 
-                # EOD forecast result
-                if row.get(
-                    "eod_error_abs"
-                ) is not None:
-                    st.subheader(
-                        "EOD Forecast Result"
-                    )
+                # =================================================
+                # EOD ACCURACY
+                # =================================================
 
+                st.subheader(
+                    "EOD Forecast Accuracy"
+                )
+
+                if predicted_close is not None:
                     st.write(
                         f"Predicted close: "
-                        f"**${float(row['eod_predicted_close']):.2f}**"
+                        f"**${float(predicted_close):.2f}**"
                     )
 
                     st.write(
@@ -2941,33 +3218,47 @@ with tracker_tab:
                         f"**${close_price:.2f}**"
                     )
 
+                if (
+                    row.get(
+                        "eod_error_abs"
+                    ) is not None
+                ):
                     st.write(
-                        f"Forecast missed by: "
+                        f"Price miss: "
                         f"**${float(row['eod_error_abs']):.2f}**"
                     )
 
+                if (
+                    row.get(
+                        "eod_error_pct"
+                    ) is not None
+                ):
                     st.write(
                         f"Forecast error: "
                         f"**{float(row['eod_error_pct']):.2%}**"
                     )
 
-                    if (
-                        row.get(
-                            "eod_range_hit"
-                        ) is True
-                    ):
-                        st.success(
-                            "Actual close landed inside predicted range."
-                        )
+                if (
+                    row.get(
+                        "eod_range_hit"
+                    ) is True
+                ):
+                    st.success(
+                        "Actual close was inside the predicted range."
+                    )
 
-                    elif (
-                        row.get(
-                            "eod_range_hit"
-                        ) is False
-                    ):
-                        st.error(
-                            "Actual close finished outside predicted range."
-                        )
+                elif (
+                    row.get(
+                        "eod_range_hit"
+                    ) is False
+                ):
+                    st.error(
+                        "Actual close finished outside the predicted range."
+                    )
+
+                st.subheader(
+                    "Trade Levels"
+                )
 
                 st.write(
                     f"Target 1 hit: "
@@ -2985,7 +3276,7 @@ with tracker_tab:
                 )
 
     # ========================================================
-    # CSV
+    # DOWNLOAD RESULTS
     # ========================================================
 
     if closed:
@@ -3013,42 +3304,52 @@ with st.expander(
 ):
     st.markdown(
         """
-### End-of-Day forecast
+### End-of-Day Forecast
 
-The app now records:
+Every analysis now shows:
 
 - Current price
 - Predicted closing price
+- Predicted move %
 - Likely closing range
-- Predicted move
-- EOD confidence
+- Expected direction
+- Confidence %
 
-During the trading day, the forecast can change as live price,
-VWAP, RSI, momentum and market conditions change.
+### Track the forecast
 
-### Track a prediction
+When you press **Track this prediction**, the current forecast is frozen
+and saved permanently in Supabase.
 
-Press **Track this prediction** to freeze the forecast at that moment.
+Future price movements do not alter that saved forecast.
 
-That is important: once tracked, the saved prediction does not change
-later just because the market moved.
-
-### After the trading session
+### After market close
 
 Press **Update results**.
 
-The tracker then records:
+The tracker records:
 
-- Actual close
-- Actual high / low
+- Actual closing price
+- Actual daily high and low
 - Direction correct / wrong
+- Dollar forecast error
+- Percentage forecast error
+- Whether the actual close landed inside the predicted range
 - Target 1 hit
 - Target 2 hit
 - Stop hit
-- EOD price forecast error
-- Whether the actual close landed inside the predicted range
 
-Over time this allows us to measure whether the model actually has an edge.
+### Model Performance
+
+As predictions accumulate, the tracker calculates:
+
+- Direction accuracy
+- Average EOD dollar error
+- Average EOD percentage error
+- Forecast range hit rate
+- Target hit counts
+- Stop count
+
+The statistics are much more meaningful after at least 20–30 completed predictions.
 """
     )
 
