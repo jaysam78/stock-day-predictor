@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -13,7 +13,7 @@ except Exception:
 
 
 # ============================================================
-# PAGE
+# PAGE SETUP
 # ============================================================
 
 st.set_page_config(
@@ -47,15 +47,15 @@ def now_et():
 
 def session_mode():
 
-    n = now_et()
+    current = now_et()
 
-    if n.weekday() >= 5:
+    if current.weekday() >= 5:
         return "WEEKEND", "Market closed"
 
-    if n.time() < time(9, 30):
+    if current.time() < time(9, 30):
         return "PREMARKET", "Premarket"
 
-    if n.time() <= time(16, 0):
+    if current.time() <= time(16, 0):
         return "REGULAR", "Live"
 
     return "AFTERHOURS", "After-hours"
@@ -89,7 +89,7 @@ CANADIAN_ETFS = {
 
 
 # ============================================================
-# STOCK UNIVERSES
+# TSX STOCKS
 # ============================================================
 
 TSX = {
@@ -137,6 +137,10 @@ TSX = {
 }
 
 
+# ============================================================
+# S&P 500 WATCH UNIVERSE
+# ============================================================
+
 SP500 = {
 
     "AAPL": "Apple",
@@ -150,6 +154,7 @@ SP500 = {
     "JPM": "JPMorgan",
     "BAC": "Bank of America",
     "GS": "Goldman Sachs",
+
     "V": "Visa",
     "MA": "Mastercard",
 
@@ -157,6 +162,7 @@ SP500 = {
     "CVX": "Chevron",
 
     "LLY": "Eli Lilly",
+
     "WMT": "Walmart",
     "COST": "Costco",
     "HD": "Home Depot",
@@ -171,6 +177,10 @@ SP500 = {
 }
 
 
+# ============================================================
+# NASDAQ WATCH UNIVERSE
+# ============================================================
+
 NASDAQ = {
 
     "AAPL": "Apple",
@@ -180,10 +190,12 @@ NASDAQ = {
     "META": "Meta",
     "GOOGL": "Alphabet",
     "AVGO": "Broadcom",
+
     "TSLA": "Tesla",
 
     "COST": "Costco",
     "NFLX": "Netflix",
+
     "AMD": "AMD",
     "ADBE": "Adobe",
     "INTC": "Intel",
@@ -204,6 +216,10 @@ NASDAQ = {
 }
 
 
+# ============================================================
+# NAMES
+# ============================================================
+
 ALL_NAMES = {}
 
 ALL_NAMES.update(TSX)
@@ -218,7 +234,7 @@ for ticker, name in CANADIAN_ETFS.items():
 
 
 # ============================================================
-# TICKER NORMALIZATION
+# TICKER HELPERS
 # ============================================================
 
 def normalize_ticker(raw):
@@ -339,31 +355,33 @@ def get_series(
 
     if (
         df is None
-        or df.empty
-        or column not in df.columns
+        or
+        df.empty
+        or
+        column not in df.columns
     ):
 
         return pd.Series(
             dtype=float
         )
 
-    value = df[column]
+    result = df[column]
 
     if isinstance(
-        value,
+        result,
         pd.DataFrame
     ):
 
-        value = value.iloc[:, 0]
+        result = result.iloc[:, 0]
 
     return pd.to_numeric(
-        value,
+        result,
         errors="coerce"
     )
 
 
 # ============================================================
-# INDICATORS
+# RSI
 # ============================================================
 
 def calculate_rsi(
@@ -371,17 +389,17 @@ def calculate_rsi(
     period=14
 ):
 
-    delta = close.diff()
+    change = close.diff()
 
     gains = (
-        delta
+        change
         .clip(lower=0)
         .rolling(period)
         .mean()
     )
 
     losses = (
-        -delta
+        -change
         .clip(upper=0)
         .rolling(period)
         .mean()
@@ -403,6 +421,10 @@ def calculate_rsi(
         (1 + rs)
     )
 
+
+# ============================================================
+# ATR
+# ============================================================
 
 def calculate_atr(
     df,
@@ -430,6 +452,7 @@ def calculate_atr(
 
     true_range = pd.concat(
         [
+
             high - low,
 
             (
@@ -441,6 +464,7 @@ def calculate_atr(
                 low -
                 previous_close
             ).abs()
+
         ],
         axis=1
     ).max(
@@ -453,6 +477,10 @@ def calculate_atr(
         .mean()
     )
 
+
+# ============================================================
+# DAILY MARKET MOVE
+# ============================================================
 
 def latest_move(
     ticker
@@ -469,6 +497,7 @@ def latest_move(
     ).dropna()
 
     if len(close) < 2:
+
         return 0.0
 
     return float(
@@ -488,7 +517,7 @@ def price_info(
     ticker
 ):
 
-    intraday = intraday_data(
+    intra = intraday_data(
         ticker
     )
 
@@ -503,21 +532,25 @@ def price_info(
     ).dropna()
 
     previous_close = (
+
         float(
             daily_close.iloc[-1]
         )
+
         if len(daily_close)
+
         else None
     )
 
-    if not intraday.empty:
 
-        intraday_close = get_series(
-            intraday,
+    if not intra.empty:
+
+        intra_close = get_series(
+            intra,
             "Close"
         ).dropna()
 
-        if len(intraday_close):
+        if len(intra_close):
 
             if SESSION == "PREMARKET":
 
@@ -541,11 +574,12 @@ def price_info(
 
             return (
                 float(
-                    intraday_close.iloc[-1]
+                    intra_close.iloc[-1]
                 ),
                 label,
                 previous_close
             )
+
 
     return (
         previous_close,
@@ -567,7 +601,9 @@ def calculate_vwap(
     )
 
     if data.empty:
+
         return None
+
 
     high = get_series(
         data,
@@ -589,9 +625,11 @@ def calculate_vwap(
         "Volume"
     )
 
+
     cumulative_volume = (
         volume.cumsum()
     )
+
 
     if (
         len(close) == 0
@@ -604,21 +642,27 @@ def calculate_vwap(
 
         return None
 
+
     typical_price = (
         high +
         low +
         close
     ) / 3
 
+
     vwap = (
+
         (
             typical_price *
             volume
         )
         .cumsum()
+
         /
+
         cumulative_volume
     )
+
 
     return float(
         vwap.iloc[-1]
@@ -637,12 +681,16 @@ def analyze(
         raw_ticker
     )
 
+
     data = daily_data(
         ticker
     )
 
+
     if data.empty:
+
         return None
+
 
     close = get_series(
         data,
@@ -664,8 +712,11 @@ def analyze(
         "Low"
     )
 
+
     if len(close) < 70:
+
         return None
+
 
     current, price_label, previous_close = (
         price_info(
@@ -673,12 +724,14 @@ def analyze(
         )
     )
 
+
     if current is None:
+
         return None
 
 
     # --------------------------------------------------------
-    # RETURNS
+    # PRICE MOMENTUM
     # --------------------------------------------------------
 
     ret1 = (
@@ -755,6 +808,7 @@ def analyze(
         .iloc[-1]
     )
 
+
     if (
         average_volume
         and
@@ -763,12 +817,10 @@ def analyze(
         )
     ):
 
-        relative_volume = (
-            float(
-                volume.iloc[-1]
-                /
-                average_volume
-            )
+        relative_volume = float(
+            volume.iloc[-1]
+            /
+            average_volume
         )
 
     else:
@@ -788,25 +840,11 @@ def analyze(
 
 
     # --------------------------------------------------------
-    # SECTOR
+    # DAY SCORE
     # --------------------------------------------------------
 
-    sector_ticker = (
-        "XIU.TO"
-        if ticker.endswith(".TO")
-        else "SPY"
-    )
-
-    sector_move = latest_move(
-        sector_ticker
-    )
-
-
-    # ========================================================
-    # DAY SCORE
-    # ========================================================
-
     day_score = 50
+
 
     day_score += (
         11 *
@@ -816,6 +854,7 @@ def analyze(
         )
     )
 
+
     day_score += (
         8 *
         np.tanh(
@@ -823,6 +862,7 @@ def analyze(
             0.025
         )
     )
+
 
     day_score += (
         7 *
@@ -832,21 +872,13 @@ def analyze(
         )
     )
 
-    day_score += (
-        8 *
-        np.tanh(
-            sector_move /
-            0.015
-        )
-    )
 
     day_score += (
         8 *
         np.tanh(
             (
                 ma5 /
-                ma20
-                -
+                ma20 -
                 1
             )
             /
@@ -854,9 +886,11 @@ def analyze(
         )
     )
 
+
     if relative_volume >= 1.5:
 
         day_score += 5
+
 
     elif relative_volume >= 1.2:
 
@@ -875,6 +909,7 @@ def analyze(
     if rsi_value >= 80:
 
         day_score -= 8
+
 
     elif rsi_value >= 73:
 
@@ -910,11 +945,12 @@ def analyze(
     )
 
 
-    # ========================================================
+    # --------------------------------------------------------
     # SWING SCORE
-    # ========================================================
+    # --------------------------------------------------------
 
     swing_score = 50
+
 
     swing_score += (
         8 *
@@ -924,6 +960,7 @@ def analyze(
         )
     )
 
+
     swing_score += (
         11 *
         np.tanh(
@@ -932,6 +969,7 @@ def analyze(
         )
     )
 
+
     swing_score += (
         10 *
         np.tanh(
@@ -939,6 +977,7 @@ def analyze(
             0.09
         )
     )
+
 
     swing_score += (
         8 *
@@ -953,6 +992,7 @@ def analyze(
         )
     )
 
+
     swing_score += (
         8 *
         np.tanh(
@@ -963,14 +1003,6 @@ def analyze(
             )
             /
             0.05
-        )
-    )
-
-    swing_score += (
-        6 *
-        np.tanh(
-            sector_move /
-            0.015
         )
     )
 
@@ -1018,9 +1050,9 @@ def analyze(
     )
 
 
-    # ========================================================
-    # QUALITY SCORE
-    # ========================================================
+    # --------------------------------------------------------
+    # QUALITY
+    # --------------------------------------------------------
 
     quality_score = 50
 
@@ -1087,9 +1119,9 @@ def analyze(
     )
 
 
-    # ========================================================
-    # ATR / BUY / SELL LEVELS
-    # ========================================================
+    # --------------------------------------------------------
+    # ATR
+    # --------------------------------------------------------
 
     atr_values = calculate_atr(
         data
@@ -1116,7 +1148,12 @@ def analyze(
         )
 
 
+    # --------------------------------------------------------
+    # TRADE LEVELS
+    # --------------------------------------------------------
+
     support = max(
+
         float(
             low.tail(10).min()
         ),
@@ -1152,6 +1189,7 @@ def analyze(
         )
 
         stop = min(
+
             support
             -
             0.15 *
@@ -1162,6 +1200,7 @@ def analyze(
             0.75 *
             atr_value
         )
+
 
     else:
 
@@ -1180,6 +1219,7 @@ def analyze(
         )
 
         stop = min(
+
             support
             -
             0.20 *
@@ -1206,6 +1246,7 @@ def analyze(
 
 
     target1 = max(
+
         resistance,
 
         entry_mid
@@ -1216,6 +1257,7 @@ def analyze(
 
 
     target2 = max(
+
         resistance
         +
         atr_value,
@@ -1239,13 +1281,15 @@ def analyze(
     ) / risk
 
 
-    # ========================================================
-    # PREDICTION
-    # ========================================================
+    # --------------------------------------------------------
+    # ACTION
+    # --------------------------------------------------------
 
     if rsi_value >= 80:
 
-        action = "DON'T CHASE"
+        action = (
+            "DON'T CHASE"
+        )
 
         prediction = (
             "UP"
@@ -1432,7 +1476,51 @@ def analyze(
 
 
 # ============================================================
-# SUPABASE / TEMPORARY STORAGE
+# SESSION STATE
+# ============================================================
+
+if (
+    "analysis_result"
+    not in st.session_state
+):
+
+    st.session_state[
+        "analysis_result"
+    ] = None
+
+
+if (
+    "scanner_results"
+    not in st.session_state
+):
+
+    st.session_state[
+        "scanner_results"
+    ] = []
+
+
+if (
+    "my_stock_results"
+    not in st.session_state
+):
+
+    st.session_state[
+        "my_stock_results"
+    ] = []
+
+
+if (
+    "predictions"
+    not in st.session_state
+):
+
+    st.session_state[
+        "predictions"
+    ] = []
+
+
+# ============================================================
+# SUPABASE
 # ============================================================
 
 def get_database():
@@ -1444,6 +1532,7 @@ def get_database():
     try:
 
         return create_client(
+
             st.secrets[
                 "SUPABASE_URL"
             ],
@@ -1465,14 +1554,127 @@ PERSISTENT_STORAGE = (
 )
 
 
-if (
-    "predictions"
-    not in st.session_state
+# ============================================================
+# PREDICTION DATE
+# ============================================================
+
+def prediction_trade_date():
+
+    current = now_et()
+
+
+    if (
+        current.weekday() < 5
+        and
+        current.time() <= time(16, 0)
+    ):
+
+        return current.date()
+
+
+    next_date = (
+        current.date()
+        +
+        timedelta(days=1)
+    )
+
+
+    while (
+        next_date.weekday()
+        >= 5
+    ):
+
+        next_date += (
+            timedelta(days=1)
+        )
+
+
+    return next_date
+
+
+# ============================================================
+# FETCH TRACKER
+# ============================================================
+
+def fetch_predictions():
+
+    if PERSISTENT_STORAGE:
+
+        try:
+
+            response = (
+
+                DATABASE
+
+                .table(
+                    "prediction_tracker"
+                )
+
+                .select(
+                    "*"
+                )
+
+                .order(
+                    "tracked_at",
+                    desc=True
+                )
+
+                .execute()
+            )
+
+            return (
+                response.data
+                or []
+            )
+
+        except Exception:
+
+            return []
+
+
+    return list(
+        st.session_state[
+            "predictions"
+        ]
+    )
+
+
+# ============================================================
+# DUPLICATE CHECK
+# ============================================================
+
+def already_tracked(
+    ticker,
+    trade_date
 ):
 
-    st.session_state[
-        "predictions"
-    ] = []
+    rows = fetch_predictions()
+
+
+    for row in rows:
+
+        if (
+            row.get(
+                "ticker"
+            )
+            ==
+            ticker
+            and
+            str(
+                row.get(
+                    "trade_date"
+                )
+            )
+            ==
+            str(
+                trade_date
+            )
+        ):
+
+            return True
+
+
+    return False
 
 
 # ============================================================
@@ -1482,6 +1684,21 @@ if (
 def save_prediction(
     result
 ):
+
+    trade_date = (
+        prediction_trade_date()
+    )
+
+
+    if already_tracked(
+        result[
+            "ticker"
+        ],
+        trade_date
+    ):
+
+        return "duplicate"
+
 
     row = {
 
@@ -1495,8 +1712,7 @@ def save_prediction(
             .isoformat(),
 
         "trade_date":
-            now_et()
-            .date()
+            trade_date
             .isoformat(),
 
         "prediction":
@@ -1582,16 +1798,25 @@ def save_prediction(
 
     if PERSISTENT_STORAGE:
 
-        DATABASE.table(
-            "prediction_tracker"
-        ).insert(
-            row
-        ).execute()
+        try:
 
-        return "persistent"
+            DATABASE.table(
+                "prediction_tracker"
+            ).insert(
+                row
+            ).execute()
+
+            return "persistent"
+
+        except Exception as error:
+
+            st.error(
+                f"Database save failed: "
+                f"{error}"
+            )
 
 
-    temporary_ids = [
+    existing_ids = [
 
         item.get(
             "id",
@@ -1607,7 +1832,7 @@ def save_prediction(
 
     row["id"] = (
         max(
-            temporary_ids
+            existing_ids
             or [0]
         )
         +
@@ -1626,53 +1851,6 @@ def save_prediction(
 
 
 # ============================================================
-# FETCH PREDICTIONS
-# ============================================================
-
-def fetch_predictions():
-
-    if PERSISTENT_STORAGE:
-
-        try:
-
-            response = (
-
-                DATABASE
-
-                .table(
-                    "prediction_tracker"
-                )
-
-                .select(
-                    "*"
-                )
-
-                .order(
-                    "tracked_at",
-                    desc=True
-                )
-
-                .execute()
-            )
-
-            return (
-                response.data
-                or []
-            )
-
-        except Exception:
-
-            return []
-
-
-    return list(
-        st.session_state[
-            "predictions"
-        ]
-    )
-
-
-# ============================================================
 # UPDATE PREDICTION
 # ============================================================
 
@@ -1683,16 +1861,22 @@ def update_prediction(
 
     if PERSISTENT_STORAGE:
 
-        DATABASE.table(
-            "prediction_tracker"
-        ).update(
-            values
-        ).eq(
-            "id",
-            row_id
-        ).execute()
+        try:
 
-        return
+            DATABASE.table(
+                "prediction_tracker"
+            ).update(
+                values
+            ).eq(
+                "id",
+                row_id
+            ).execute()
+
+            return
+
+        except Exception:
+
+            pass
 
 
     for row in (
@@ -1715,7 +1899,7 @@ def update_prediction(
 
 
 # ============================================================
-# SETTLE / CHECK RESULT
+# SETTLE PREDICTION
 # ============================================================
 
 def settle_prediction(
@@ -1737,21 +1921,13 @@ def settle_prediction(
         row[
             "ticker"
         ],
-        "1mo"
+        "3mo"
     )
 
 
     if data.empty:
 
         return row
-
-
-    dates = (
-        pd.to_datetime(
-            data.index
-        )
-        .date
-    )
 
 
     target_date = (
@@ -1764,63 +1940,102 @@ def settle_prediction(
     )
 
 
-    mask = np.array(
-        [
-            d ==
-            target_date
+    available_dates = (
+        pd.to_datetime(
+            data.index
+        )
+        .date
+    )
 
-            for d
-            in dates
+
+    positions = [
+
+        index
+
+        for index, available_date
+
+        in enumerate(
+            available_dates
+        )
+
+        if available_date
+        >=
+        target_date
+    ]
+
+
+    if not positions:
+
+        return row
+
+
+    position = (
+        positions[0]
+    )
+
+
+    actual_date = (
+        available_dates[
+            position
         ]
     )
 
 
-    if not mask.any():
+    if (
+        actual_date
+        ==
+        now_et().date()
+        and
+        SESSION
+        in [
+            "PREMARKET",
+            "REGULAR"
+        ]
+    ):
 
         return row
 
 
     daily_row = (
-        data.loc[
-            mask
+        data.iloc[
+            position
         ]
-        .iloc[-1]
     )
 
 
-    def value(
+    def scalar(
         column
     ):
 
-        item = (
+        value = (
             daily_row[
                 column
             ]
         )
 
         if isinstance(
-            item,
+            value,
             pd.Series
         ):
 
-            item = (
-                item.iloc[0]
+            value = (
+                value.iloc[0]
             )
 
         return float(
-            item
+            value
         )
 
 
-    close_price = value(
+    close_price = scalar(
         "Close"
     )
 
-    day_high = value(
+    day_high = scalar(
         "High"
     )
 
-    day_low = value(
+    day_low = scalar(
         "Low"
     )
 
@@ -1832,15 +2047,18 @@ def settle_prediction(
     )
 
 
-    prediction = row[
-        "prediction"
-    ]
+    prediction = (
+        row[
+            "prediction"
+        ]
+    )
 
 
     if prediction == "UP":
 
         direction_correct = (
-            close_price >
+            close_price
+            >
             start_price
         )
 
@@ -1848,7 +2066,8 @@ def settle_prediction(
     elif prediction == "DOWN":
 
         direction_correct = (
-            close_price <
+            close_price
+            <
             start_price
         )
 
@@ -1931,8 +2150,7 @@ def settle_prediction(
 # ============================================================
 
 def show_trade(
-    result,
-    button_key
+    result
 ):
 
     st.subheader(
@@ -1980,40 +2198,85 @@ def show_trade(
 
 
     st.write(
-        f"Risk / Reward T1: "
+        f"Prediction: "
+        f"**{result['prediction']}**"
+    )
+
+
+    st.write(
+        f"Risk / Reward to T1: "
         f"**1:{result['rr1']:.1f}**"
     )
 
 
+# ============================================================
+# TRACK BUTTON
+# IMPORTANT: NO st.rerun()
+# ============================================================
+
+def track_button(
+    result,
+    key
+):
+
+    trade_date = (
+        prediction_trade_date()
+    )
+
+
+    if already_tracked(
+        result[
+            "ticker"
+        ],
+        trade_date
+    ):
+
+        st.success(
+            f"Tracked ✓ for "
+            f"{trade_date}"
+        )
+
+        return
+
+
     if st.button(
-        "📌 Track this prediction today",
-        key=button_key,
+        "📌 Track this prediction",
+        key=key,
         use_container_width=True
     ):
 
-        storage_mode = (
-            save_prediction(
-                result
-            )
+        mode = save_prediction(
+            result
         )
 
 
-        if (
-            storage_mode
-            ==
-            "persistent"
-        ):
+        if mode == "duplicate":
+
+            st.info(
+                "Already tracked for this trading session."
+            )
+
+
+        elif mode == "persistent":
 
             st.success(
                 "Prediction saved permanently."
             )
 
+
         else:
 
             st.success(
-                "Prediction saved for this session. "
-                "Connect Supabase for permanent history."
+                "Prediction saved successfully "
+                "for this session."
             )
+
+
+        st.write(
+            f"Tracker now contains "
+            f"**{len(fetch_predictions())}** "
+            f"prediction(s)."
+        )
 
 
 # ============================================================
@@ -2042,9 +2305,7 @@ except Exception:
         "TRP.TO"
     )
 
-    saved_watchlist = (
-        ""
-    )
+    saved_watchlist = ""
 
 
 st.subheader(
@@ -2052,12 +2313,9 @@ st.subheader(
 )
 
 
-holdings_text = (
-    st.text_input(
-        "Stocks / ETFs you own",
-        value=
-            saved_holdings
-    )
+holdings_text = st.text_input(
+    "Stocks / ETFs you own",
+    value=saved_holdings
 )
 
 
@@ -2066,12 +2324,9 @@ st.subheader(
 )
 
 
-watchlist_text = (
-    st.text_input(
-        "Stocks / ETFs you want to watch",
-        value=
-            saved_watchlist
-    )
+watchlist_text = st.text_input(
+    "Stocks / ETFs you want to watch",
+    value=saved_watchlist
 )
 
 
@@ -2131,26 +2386,23 @@ if st.button(
 # TABS
 # ============================================================
 
-scan_tab, my_tab, analyze_tab, tracker_tab = (
-
-    st.tabs(
-        [
-            "Market Scanner",
-            "⭐ My Stocks",
-            "Analyze",
-            "📊 Prediction Tracker"
-        ]
-    )
+scan_tab, my_tab, analyze_tab, tracker_tab = st.tabs(
+    [
+        "Scanner",
+        "⭐ My Stocks",
+        "Analyze",
+        "📊 Prediction Tracker"
+    ]
 )
 
 
 # ============================================================
-# MARKET SCANNER
+# SCANNER
 # ============================================================
 
 with scan_tab:
 
-    market = st.selectbox(
+    market_choice = st.selectbox(
         "Market",
         [
             "TSX",
@@ -2181,28 +2433,28 @@ with scan_tab:
     ):
 
 
-        if market == "TSX":
+        if market_choice == "TSX":
 
             universe = list(
                 TSX
             )
 
 
-        elif market == "S&P 500":
+        elif market_choice == "S&P 500":
 
             universe = list(
                 SP500
             )
 
 
-        elif market == "Nasdaq-100":
+        elif market_choice == "Nasdaq-100":
 
             universe = list(
                 NASDAQ
             )
 
 
-        elif market == "Canadian ETFs":
+        elif market_choice == "Canadian ETFs":
 
             universe = [
 
@@ -2235,13 +2487,16 @@ with scan_tab:
             )
 
 
-        universe = universe[
-            :count
-        ]
+        universe = (
+            universe[
+                :count
+            ]
+        )
 
 
         for ticker in (
-            holdings +
+            holdings
+            +
             watchlist
         ):
 
@@ -2260,7 +2515,6 @@ with scan_tab:
             0
         )
 
-
         status = st.empty()
 
 
@@ -2269,7 +2523,8 @@ with scan_tab:
         ):
 
             status.write(
-                f"Analyzing {ticker}..."
+                f"Analyzing "
+                f"{ticker}..."
             )
 
 
@@ -2302,7 +2557,9 @@ with scan_tab:
         status.empty()
 
 
-        results = sorted(
+        st.session_state[
+            "scanner_results"
+        ] = sorted(
             results,
             key=lambda item:
                 item[
@@ -2312,62 +2569,121 @@ with scan_tab:
         )
 
 
-        if not results:
-
-            st.error(
-                "No usable results."
-            )
-
-
-        else:
-
-            st.subheader(
-                "🏆 Best Current Setup"
-            )
+    results = (
+        st.session_state[
+            "scanner_results"
+        ]
+    )
 
 
-            st.header(
-                results[0][
-                    "ticker"
-                ]
+    if results:
+
+        best = results[0]
+
+
+        st.subheader(
+            "🏆 Best Current Setup"
+        )
+
+
+        st.header(
+            best[
+                "ticker"
+            ]
+        )
+
+
+        st.write(
+            best[
+                "name"
+            ]
+        )
+
+
+        show_trade(
+            best
+        )
+
+
+        track_button(
+            best,
+            "best_track"
+        )
+
+
+        st.divider()
+
+
+        if st.button(
+            "📌 Track all scanner results",
+            use_container_width=True
+        ):
+
+            saved_count = 0
+
+            duplicate_count = 0
+
+
+            for result in results:
+
+                mode = save_prediction(
+                    result
+                )
+
+
+                if mode == "duplicate":
+
+                    duplicate_count += 1
+
+                else:
+
+                    saved_count += 1
+
+
+            st.success(
+                f"Saved "
+                f"{saved_count} "
+                f"prediction(s). "
+                f"{duplicate_count} "
+                f"already tracked."
             )
 
 
             st.write(
-                results[0][
-                    "name"
-                ]
+                f"Tracker now contains "
+                f"**{len(fetch_predictions())}** "
+                f"prediction(s)."
             )
 
 
-            show_trade(
-                results[0],
-                "track_best"
-            )
+        st.subheader(
+            "Top Opportunities"
+        )
 
 
-            st.divider()
+        for index, result in enumerate(
+            results[:10]
+        ):
 
-
-            st.subheader(
-                "Top Opportunities"
-            )
-
-
-            for index, result in enumerate(
-                results[:10]
+            with st.expander(
+                f"{result['ticker']} — "
+                f"{result['action']}"
             ):
 
-                with st.expander(
-                    f"{result['ticker']} — "
-                    f"{result['action']}"
-                ):
+                st.write(
+                    f"**{result['name']}**"
+                )
 
-                    show_trade(
-                        result,
-                        f"scan_{index}_"
-                        f"{result['ticker']}"
-                    )
+
+                show_trade(
+                    result
+                )
+
+
+                track_button(
+                    result,
+                    f"scan_track_{index}"
+                )
 
 
 # ============================================================
@@ -2378,7 +2694,8 @@ with my_tab:
 
     personal = list(
         dict.fromkeys(
-            holdings +
+            holdings
+            +
             watchlist
         )
     )
@@ -2389,10 +2706,10 @@ with my_tab:
         use_container_width=True
     ):
 
+        refreshed = []
 
-        for index, ticker in enumerate(
-            personal
-        ):
+
+        for ticker in personal:
 
             result = analyze(
                 ticker
@@ -2401,45 +2718,127 @@ with my_tab:
 
             if result:
 
-                st.header(
+                refreshed.append(
+                    result
+                )
+
+
+        st.session_state[
+            "my_stock_results"
+        ] = refreshed
+
+
+    results = (
+        st.session_state[
+            "my_stock_results"
+        ]
+    )
+
+
+    if watchlist:
+
+        if st.button(
+            "📌 Track all watchlist",
+            use_container_width=True
+        ):
+
+            saved_count = 0
+
+            duplicate_count = 0
+
+
+            for ticker in watchlist:
+
+                result = analyze(
                     ticker
                 )
 
 
-                if ticker in holdings:
+                if result is None:
 
-                    st.caption(
-                        "OWNED"
-                    )
-
-                else:
-
-                    st.caption(
-                        "WATCHLIST"
-                    )
+                    continue
 
 
-                show_trade(
-                    result,
-                    f"my_{index}_"
-                    f"{ticker}"
+                mode = save_prediction(
+                    result
                 )
 
 
-                st.divider()
+                if mode == "duplicate":
+
+                    duplicate_count += 1
+
+                else:
+
+                    saved_count += 1
+
+
+            st.success(
+                f"Saved "
+                f"{saved_count} "
+                f"watchlist prediction(s)."
+            )
+
+
+            st.write(
+                f"Tracker now contains "
+                f"**{len(fetch_predictions())}** "
+                f"prediction(s)."
+            )
+
+
+    for index, result in enumerate(
+        results
+    ):
+
+        st.header(
+            result[
+                "ticker"
+            ]
+        )
+
+
+        if (
+            result[
+                "ticker"
+            ]
+            in holdings
+        ):
+
+            st.caption(
+                "OWNED"
+            )
+
+        else:
+
+            st.caption(
+                "WATCHLIST"
+            )
+
+
+        show_trade(
+            result
+        )
+
+
+        track_button(
+            result,
+            f"my_track_{index}"
+        )
+
+
+        st.divider()
 
 
 # ============================================================
-# ANALYZE ONE
+# ANALYZE
 # ============================================================
 
 with analyze_tab:
 
-    raw_ticker = (
-        st.text_input(
-            "Enter ticker",
-            value="XEQT"
-        )
+    raw_ticker = st.text_input(
+        "Enter ticker",
+        value="CVE"
     )
 
 
@@ -2472,7 +2871,12 @@ with analyze_tab:
         )
 
 
-        if not result:
+        if result is None:
+
+            st.session_state[
+                "analysis_result"
+            ] = None
+
 
             st.error(
                 "No usable market data was found."
@@ -2481,25 +2885,43 @@ with analyze_tab:
 
         else:
 
-            st.header(
-                result[
-                    "ticker"
-                ]
-            )
+            st.session_state[
+                "analysis_result"
+            ] = result
 
 
-            st.write(
-                result[
-                    "name"
-                ]
-            )
+    result = (
+        st.session_state[
+            "analysis_result"
+        ]
+    )
 
 
-            show_trade(
-                result,
-                f"single_"
-                f"{result['ticker']}"
-            )
+    if result is not None:
+
+        st.header(
+            result[
+                "ticker"
+            ]
+        )
+
+
+        st.write(
+            result[
+                "name"
+            ]
+        )
+
+
+        show_trade(
+            result
+        )
+
+
+        track_button(
+            result,
+            "single_track"
+        )
 
 
 # ============================================================
@@ -2513,9 +2935,6 @@ with tracker_tab:
     )
 
 
-    # FIXED VERSION:
-    # This prevents Streamlit from printing code/object text.
-
     if PERSISTENT_STORAGE:
 
         st.success(
@@ -2526,8 +2945,19 @@ with tracker_tab:
 
         st.warning(
             "Temporary storage only. "
-            "Connect Supabase for permanent multi-day history."
+            "Predictions remain during this Streamlit session."
         )
+
+
+    rows = fetch_predictions()
+
+
+    st.metric(
+        "Tracked Predictions",
+        len(
+            rows
+        )
+    )
 
 
     if st.button(
@@ -2538,14 +2968,14 @@ with tracker_tab:
         updated_count = 0
 
 
-        for row in fetch_predictions():
+        for row in rows:
 
             before = row.get(
                 "result_status"
             )
 
 
-            after = settle_prediction(
+            result = settle_prediction(
                 row
             )
 
@@ -2555,7 +2985,7 @@ with tracker_tab:
                 !=
                 "CLOSED"
                 and
-                after.get(
+                result.get(
                     "result_status"
                 )
                 ==
@@ -2573,57 +3003,6 @@ with tracker_tab:
 
 
     rows = fetch_predictions()
-
-    settled_rows = []
-
-
-    for row in rows:
-
-        trade_date = (
-            pd.to_datetime(
-                row[
-                    "trade_date"
-                ]
-            )
-            .date()
-        )
-
-
-        if (
-            row.get(
-                "result_status"
-            )
-            !=
-            "CLOSED"
-            and
-            (
-                trade_date
-                <
-                now_et().date()
-                or
-                (
-                    trade_date
-                    ==
-                    now_et().date()
-                    and
-                    SESSION
-                    ==
-                    "AFTERHOURS"
-                )
-            )
-        ):
-
-            row = settle_prediction(
-                row
-            )
-
-
-        settled_rows.append(
-            row
-        )
-
-
-    rows = settled_rows
 
 
     closed = [
@@ -2685,10 +3064,8 @@ with tracker_tab:
         )
 
 
-        col1, col2, col3, col4 = (
-            st.columns(
-                4
-            )
+        col1, col2, col3, col4 = st.columns(
+            4
         )
 
 
@@ -2714,14 +3091,13 @@ with tracker_tab:
 
 
         col3.metric(
-            "T1 hit",
+            "T1 Hit",
             sum(
                 bool(
                     row.get(
                         "target1_hit"
                     )
                 )
-
                 for row
                 in closed
             )
@@ -2729,14 +3105,13 @@ with tracker_tab:
 
 
         col4.metric(
-            "Stop hit",
+            "Stops",
             sum(
                 bool(
                     row.get(
                         "stop_hit"
                     )
                 )
-
                 for row
                 in closed
             )
@@ -2751,7 +3126,6 @@ with tracker_tab:
 
 
     for row in rows:
-
 
         if (
             row.get(
@@ -2775,17 +3149,21 @@ with tracker_tab:
 
         else:
 
-            icon = ""
+            icon = "⏳"
 
 
         with st.expander(
-
             f"{icon} "
             f"{row['ticker']} — "
             f"{row['prediction']} — "
             f"{row['trade_date']} — "
             f"{row.get('result_status','OPEN')}"
         ):
+
+            st.write(
+                f"Tracked at: "
+                f"**{row['tracked_at']}**"
+            )
 
 
             st.write(
@@ -2795,7 +3173,7 @@ with tracker_tab:
 
 
             st.write(
-                f"Scores Day / Swing / Quality: "
+                f"Day / Swing / Quality: "
                 f"**{row['day_score']} / "
                 f"{row['swing_score']} / "
                 f"{row['quality_score']}**"
@@ -2831,25 +3209,25 @@ with tracker_tab:
                 "CLOSED"
             ):
 
+                close_price = float(
+                    row[
+                        "close_price"
+                    ]
+                )
+
+
+                start_price = float(
+                    row[
+                        "start_price"
+                    ]
+                )
+
 
                 change = (
-
-                    float(
-                        row[
-                            "close_price"
-                        ]
-                    )
-
+                    close_price
                     /
-
-                    float(
-                        row[
-                            "start_price"
-                        ]
-                    )
-
+                    start_price
                     -
-
                     1
                 )
 
@@ -2859,18 +3237,18 @@ with tracker_tab:
 
                 st.write(
                     f"Closing price: "
-                    f"**${float(row['close_price']):.2f}**"
+                    f"**${close_price:.2f}**"
                 )
 
 
                 st.write(
-                    f"Tracked-to-close change: "
+                    f"Change: "
                     f"**{change:+.2%}**"
                 )
 
 
                 st.write(
-                    f"High / Low: "
+                    f"Day High / Low: "
                     f"**${float(row['day_high']):.2f} / "
                     f"${float(row['day_low']):.2f}**"
                 )
@@ -2884,7 +3262,7 @@ with tracker_tab:
                 ):
 
                     st.success(
-                        "Directional prediction: CORRECT"
+                        "Prediction: CORRECT"
                     )
 
 
@@ -2896,7 +3274,7 @@ with tracker_tab:
                 ):
 
                     st.error(
-                        "Directional prediction: WRONG"
+                        "Prediction: WRONG"
                     )
 
 
@@ -2904,7 +3282,7 @@ with tracker_tab:
 
                     st.info(
                         "Neutral prediction — "
-                        "not counted as correct or wrong."
+                        "not scored."
                     )
 
 
@@ -2928,21 +3306,19 @@ with tracker_tab:
 
     if closed:
 
-        tracker_dataframe = (
-            pd.DataFrame(
-                closed
-            )
+        tracker_df = pd.DataFrame(
+            closed
         )
 
 
         st.download_button(
-            "Download closed predictions CSV",
+            "Download results CSV",
 
-            tracker_dataframe.to_csv(
+            tracker_df.to_csv(
                 index=False
             ),
 
-            "prediction_tracker.csv",
+            "prediction_results.csv",
 
             "text/csv",
 
@@ -2955,24 +3331,22 @@ with tracker_tab:
 # ============================================================
 
 with st.expander(
-    "How the Prediction Tracker works"
+    "How to test the tracker"
 ):
 
     st.markdown(
         """
-1. Scan or analyze a stock.
-2. Tap **Track this prediction today**.
-3. The app saves the prediction, starting price, scores, buy zone, stop and targets.
-4. After the trading day ends, open **Prediction Tracker**.
-5. Tap **Update results**.
-6. The app compares the prediction with the actual closing price.
-7. It records whether the direction was correct and whether Target 1, Target 2 or the stop were reached.
+1. Open **Analyze**.
+2. Enter `CVE`.
+3. Press **Analyze**.
+4. Scroll to the bottom of the result.
+5. Press **Track this prediction**.
+6. You should immediately see **Prediction saved successfully**.
+7. It will also display the number of predictions currently stored.
+8. Open **Prediction Tracker**.
+9. The tracked stock should appear there.
 
-The tracker can calculate your running directional accuracy.
-
-Without Supabase, the history is temporary and may disappear when Streamlit restarts.
-
-Once Supabase is connected, predictions can be saved permanently across days.
+There is deliberately **no forced page rerun after saving** in this version.
 """
     )
 
