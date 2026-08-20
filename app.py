@@ -689,6 +689,42 @@ def already_tracked(ticker, trade_date):
     return any(row.get("ticker") == ticker and str(row.get("trade_date")) == str(trade_date) for row in fetch_predictions())
 
 
+def previous_day_picks(target_trade_date=None):
+    """Return the most recent prior tracked date and its unique tickers."""
+    target_trade_date = target_trade_date or prediction_trade_date()
+    rows = fetch_predictions()
+    prior_dates = []
+
+    for row in rows:
+        raw_date = row.get("trade_date")
+        if not raw_date:
+            continue
+        try:
+            d = pd.to_datetime(raw_date).date()
+        except Exception:
+            continue
+        if d < target_trade_date:
+            prior_dates.append(d)
+
+    if not prior_dates:
+        return None, []
+
+    most_recent = max(prior_dates)
+    tickers, seen = [], set()
+
+    for row in rows:
+        try:
+            d = pd.to_datetime(row.get("trade_date")).date()
+        except Exception:
+            continue
+        ticker = row.get("ticker")
+        if d == most_recent and ticker and ticker not in seen:
+            seen.add(ticker)
+            tickers.append(ticker)
+
+    return most_recent, tickers
+
+
 def save_snapshot(prediction_id, result, trade_date):
     if not PERSISTENT_STORAGE:
         return False
@@ -945,6 +981,87 @@ def track_button(result, key):
         elif mode == "duplicate": st.info("Already tracked.")
 
 
+def render_prediction_detail(row, i):
+    st.write(f"Start price: **${float(row['start_price']):.2f}**")
+    st.write(f"Original signal: **{row['action']}**")
+
+    st.subheader("Original Saved Forecast")
+    original_close, original_conf = row.get("eod_predicted_close"), row.get("eod_confidence")
+    if original_close is not None:
+        st.write(f"Predicted close: **${float(original_close):.2f}**")
+    if original_conf is not None:
+        st.write(f"Confidence: **{int(original_conf)}% ({confidence_label(int(original_conf))})**")
+
+    st.subheader("Saved Market Context")
+    st.write(f"Market regime: **{row.get('saved_market_regime') or '—'}**")
+    if row.get("saved_vix_level") is not None:
+        st.write(f"VIX: **{float(row['saved_vix_level']):.2f}**")
+    if row.get("saved_sector_move") is not None:
+        st.write(f"Sector move: **{float(row['saved_sector_move']):+.2%}**")
+    st.write(f"Event risk: **{row.get('saved_event_risk') or '—'}**")
+
+    st.subheader("Latest Forecast")
+    latest_close, latest_conf = row.get("latest_eod_predicted_close"), row.get("latest_eod_confidence")
+    if latest_close is not None:
+        st.write(f"Latest predicted close: **${float(latest_close):.2f}**")
+    if latest_conf is not None:
+        st.write(f"Latest confidence: **{int(latest_conf)}% ({confidence_label(int(latest_conf))})**")
+    if original_close is not None and latest_close is not None:
+        st.markdown(
+            "Change in model forecast: " + colored_change(float(latest_close) - float(original_close)),
+            unsafe_allow_html=True,
+        )
+    if original_conf is not None and latest_conf is not None:
+        st.markdown(
+            "Confidence change: " + colored_change(int(latest_conf) - int(original_conf), " pts"),
+            unsafe_allow_html=True,
+        )
+
+    if row.get("id") is not None:
+        snapshots = fetch_snapshots(row["id"])
+        if snapshots:
+            with st.expander(f"Forecast history ({len(snapshots)} snapshots)"):
+                snap_df = pd.DataFrame(snapshots)
+                cols = [c for c in [
+                    "snapshot_at", "current_price", "predicted_close", "confidence",
+                    "predicted_move", "day_score", "swing_score", "quality_score",
+                    "market_regime", "vix_level", "sector_move",
+                    "sector_relative_strength", "commodity_move", "event_risk"
+                ] if c in snap_df.columns]
+                st.dataframe(snap_df[cols], use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.write(f"Buy zone: **${float(row['entry_low']):.2f} – ${float(row['entry_high']):.2f}**")
+    st.write(f"Stop: **${float(row['stop_price']):.2f}**")
+    st.write(f"Target 1: **${float(row['target1']):.2f}**")
+    st.write(f"Target 2: **${float(row['target2']):.2f}**")
+
+    if row.get("result_status") == "CLOSED":
+        st.subheader("Actual Result")
+        st.write(f"Actual close: **${float(row['close_price']):.2f}**")
+        if row.get("eod_error_pct") is not None:
+            st.write(f"Original forecast error: **{float(row['eod_error_pct']):.2%}**")
+        if row.get("direction_correct") is True:
+            st.success("Direction prediction: CORRECT")
+        elif row.get("direction_correct") is False:
+            st.error("Direction prediction: WRONG")
+        else:
+            st.info("Neutral prediction — direction not scored.")
+        if row.get("eod_range_hit") is True:
+            st.success("Actual close landed inside the predicted range.")
+        elif row.get("eod_range_hit") is False:
+            st.error("Actual close finished outside the predicted range.")
+
+    if row.get("id") is not None and st.button(
+        f"🗑 Remove {row['ticker']}",
+        key=f"remove_{row['id']}_{i}",
+        use_container_width=True,
+    ):
+        if remove_prediction(row["id"]):
+            st.success(f"{row['ticker']} removed.")
+            st.rerun()
+
+
 # ============================================================
 # HOLDINGS / WATCHLIST
 # ============================================================
@@ -1034,88 +1151,210 @@ with analyze_tab:
 
 with tracker_tab:
     st.subheader("Prediction Tracker")
+
     if PERSISTENT_STORAGE:
         st.success("Persistent storage connected.")
     else:
         st.warning("Temporary storage only.")
+
+    rows = fetch_predictions()
+    target_date = prediction_trade_date()
+
+    # ========================================================
+    # DAILY CARRY-FORWARD
+    # ========================================================
+    prior_date, prior_tickers = previous_day_picks(target_date)
+
+    st.subheader("Today's Picks")
+
+    if prior_tickers:
+        st.caption(
+            f"Automatically carried forward from {prior_date}. "
+            f"Generating these creates NEW forecasts for {target_date}; "
+            "the older records stay untouched."
+        )
+
+        all_known_tickers = sorted(
+            set(ALL_NAMES.keys()) | set(prior_tickers) | set(holdings) | set(watchlist)
+        )
+
+        selected_tickers = st.multiselect(
+            "Picks to carry forward",
+            options=all_known_tickers,
+            default=prior_tickers,
+            key=f"carry_forward_{target_date}",
+        )
+
+        extra_text = st.text_input(
+            "Add extra tickers",
+            value="",
+            placeholder="Example: XEQT, XGRO, NVDA",
+            key=f"extra_tickers_{target_date}",
+        )
+
+        extra_tickers = [
+            normalize_ticker(x)
+            for x in extra_text.split(",")
+            if x.strip()
+        ]
+
+        todays_tickers = list(dict.fromkeys(selected_tickers + extra_tickers))
+
+        if todays_tickers:
+            st.write(f"Ready for **{target_date}**: {', '.join(todays_tickers)}")
+
+        if st.button(
+            f"⚡ Generate {target_date} Predictions",
+            type="primary",
+            use_container_width=True,
+            disabled=not todays_tickers,
+        ):
+            saved_count = 0
+            duplicate_count = 0
+            failed_count = 0
+            progress = st.progress(0)
+            status = st.empty()
+
+            for i, ticker in enumerate(todays_tickers):
+                status.write(f"Analyzing {ticker} ({i+1}/{len(todays_tickers)})...")
+                result = analyze(ticker, include_event=True)
+
+                if result is None:
+                    failed_count += 1
+                else:
+                    mode = save_prediction(result)
+                    if mode == "duplicate":
+                        duplicate_count += 1
+                    elif mode in {"persistent", "temporary"}:
+                        saved_count += 1
+                    else:
+                        failed_count += 1
+
+                progress.progress((i + 1) / len(todays_tickers))
+
+            progress.empty()
+            status.empty()
+
+            st.success(
+                f"Created {saved_count} new prediction(s) for {target_date}. "
+                f"{duplicate_count} already existed. "
+                f"{failed_count} could not be generated."
+            )
+            st.rerun()
+    else:
+        st.info(
+            "No previous tracked trading day was found yet. "
+            "After you have one saved day, those tickers will automatically appear here for the next trading date."
+        )
+
+    st.divider()
+
+    # ========================================================
+    # TRACKER CONTROLS
+    # ========================================================
     rows = fetch_predictions()
     st.metric("Tracked Predictions", len(rows))
+
     open_rows = [r for r in rows if r.get("result_status") != "CLOSED"]
+
     if open_rows and st.button("🔄 Refresh Latest Forecasts", type="primary", use_container_width=True):
         refreshed = 0
         for row in open_rows:
-            if refresh_latest_forecast(row): refreshed += 1
+            if refresh_latest_forecast(row):
+                refreshed += 1
         st.success(f"Updated {refreshed} latest forecast(s). Original forecasts were not changed.")
         rows = fetch_predictions()
+
     if st.button("✅ Update End-of-Day Results", use_container_width=True):
         updated = 0
         for row in rows:
             before = row.get("result_status")
             after = settle_prediction(row)
-            if before != "CLOSED" and after.get("result_status") == "CLOSED": updated += 1
+            if before != "CLOSED" and after.get("result_status") == "CLOSED":
+                updated += 1
         st.success(f"Closed {updated} prediction(s).")
         rows = fetch_predictions()
-    if rows and st.button("🧹 Clear All Tracked Predictions", use_container_width=True):
-        if clear_all_predictions(): st.success("All predictions removed."); st.rerun()
+
+    with st.expander("Danger zone"):
+        st.warning(
+            "Clearing the tracker deletes your historical model-validation data. "
+            "Normally you should keep all closed predictions."
+        )
+        confirm_clear = st.checkbox(
+            "I understand this permanently deletes all tracker history.",
+            key="confirm_clear_all",
+        )
+        if st.button(
+            "🧹 Clear All Tracked Predictions",
+            use_container_width=True,
+            disabled=not confirm_clear,
+        ):
+            if clear_all_predictions():
+                st.success("All predictions removed.")
+                st.rerun()
 
     closed = [r for r in rows if r.get("result_status") == "CLOSED"]
     if closed:
         scored = [r for r in closed if r.get("direction_correct") is not None]
-        accuracy = sum(1 for r in scored if r.get("direction_correct") is True) / len(scored) if scored else None
+        correct = sum(1 for r in scored if r.get("direction_correct") is True)
+        accuracy = correct / len(scored) if scored else None
         errors = [float(r["eod_error_pct"]) for r in closed if r.get("eod_error_pct") is not None]
-        ranges = [r for r in closed if r.get("eod_range_hit") is not None]
+
         c1, c2 = st.columns(2)
         c1.metric("Direction accuracy", f"{accuracy:.1%}" if accuracy is not None else "—")
         c2.metric("Avg forecast error", f"{np.mean(errors):.2%}" if errors else "—")
-        if len(closed) < 20: st.info(f"Only {len(closed)} completed forecast(s). Treat the statistics as preliminary.")
+
+        if scored:
+            st.caption(f"Direction sample: {correct}/{len(scored)} correct")
+
+        if len(closed) < 20:
+            st.info(f"Only {len(closed)} completed forecast(s). Treat the statistics as preliminary.")
 
     if not rows:
         st.info("No tracked predictions yet.")
 
-    for i, row in enumerate(rows):
-        icon = "✅" if row.get("direction_correct") is True else "❌" if row.get("direction_correct") is False else "⏳"
-        with st.expander(f"{icon} {row['ticker']} — {row['trade_date']} — {row.get('result_status', 'OPEN')}"):
-            st.write(f"Start price: **${float(row['start_price']):.2f}**")
-            st.write(f"Original signal: **{row['action']}**")
-            st.subheader("Original Saved Forecast")
-            original_close, original_conf = row.get("eod_predicted_close"), row.get("eod_confidence")
-            if original_close is not None: st.write(f"Predicted close: **${float(original_close):.2f}**")
-            if original_conf is not None: st.write(f"Confidence: **{int(original_conf)}% ({confidence_label(int(original_conf))})**")
-            st.subheader("Saved Market Context")
-            st.write(f"Market regime: **{row.get('saved_market_regime') or '—'}**")
-            if row.get("saved_vix_level") is not None: st.write(f"VIX: **{float(row['saved_vix_level']):.2f}**")
-            if row.get("saved_sector_move") is not None: st.write(f"Sector move: **{float(row['saved_sector_move']):+.2%}**")
-            st.write(f"Event risk: **{row.get('saved_event_risk') or '—'}**")
-            st.subheader("Latest Forecast")
-            latest_close, latest_conf = row.get("latest_eod_predicted_close"), row.get("latest_eod_confidence")
-            if latest_close is not None: st.write(f"Latest predicted close: **${float(latest_close):.2f}**")
-            if latest_conf is not None: st.write(f"Latest confidence: **{int(latest_conf)}% ({confidence_label(int(latest_conf))})**")
-            if original_close is not None and latest_close is not None:
-                st.markdown("Change in model forecast: " + colored_change(float(latest_close)-float(original_close)), unsafe_allow_html=True)
-            if original_conf is not None and latest_conf is not None:
-                st.markdown("Confidence change: " + colored_change(int(latest_conf)-int(original_conf), " pts"), unsafe_allow_html=True)
-            if row.get("id") is not None:
-                snapshots = fetch_snapshots(row["id"])
-                if snapshots:
-                    with st.expander(f"Forecast history ({len(snapshots)} snapshots)"):
-                        snap_df = pd.DataFrame(snapshots)
-                        cols = [c for c in ["snapshot_at", "current_price", "predicted_close", "confidence", "predicted_move", "day_score", "swing_score", "quality_score", "market_regime", "vix_level", "sector_move", "sector_relative_strength", "commodity_move", "event_risk"] if c in snap_df.columns]
-                        st.dataframe(snap_df[cols], use_container_width=True, hide_index=True)
+    # ========================================================
+    # GROUP BY TRADE DATE
+    # ========================================================
+    if rows:
+        grouped = {}
+        for row in rows:
+            date_key = str(row.get("trade_date") or "Unknown date")
+            grouped.setdefault(date_key, []).append(row)
+
+        date_keys = sorted(grouped.keys(), reverse=True)
+        view_choice = st.selectbox(
+            "View predictions",
+            ["All dates"] + date_keys,
+            index=0,
+        )
+        dates_to_render = date_keys if view_choice == "All dates" else [view_choice]
+        global_index = 0
+
+        for date_key in dates_to_render:
+            date_rows = grouped[date_key]
+            open_count = sum(1 for r in date_rows if r.get("result_status") != "CLOSED")
+            closed_count = len(date_rows) - open_count
+
+            st.markdown(f"## {date_key}")
+            st.caption(
+                f"{len(date_rows)} prediction(s) • "
+                f"{open_count} open • {closed_count} closed"
+            )
+
+            for row in date_rows:
+                icon = (
+                    "✅" if row.get("direction_correct") is True
+                    else "❌" if row.get("direction_correct") is False
+                    else "⏳"
+                )
+                with st.expander(
+                    f"{icon} {row['ticker']} — {row.get('result_status', 'OPEN')}"
+                ):
+                    render_prediction_detail(row, global_index)
+                global_index += 1
+
             st.divider()
-            st.write(f"Buy zone: **${float(row['entry_low']):.2f} – ${float(row['entry_high']):.2f}**")
-            st.write(f"Stop: **${float(row['stop_price']):.2f}**")
-            st.write(f"Target 1: **${float(row['target1']):.2f}**")
-            st.write(f"Target 2: **${float(row['target2']):.2f}**")
-            if row.get("result_status") == "CLOSED":
-                st.subheader("Actual Result")
-                st.write(f"Actual close: **${float(row['close_price']):.2f}**")
-                if row.get("eod_error_pct") is not None: st.write(f"Original forecast error: **{float(row['eod_error_pct']):.2%}**")
-                if row.get("direction_correct") is True: st.success("Direction prediction: CORRECT")
-                elif row.get("direction_correct") is False: st.error("Direction prediction: WRONG")
-                if row.get("eod_range_hit") is True: st.success("Actual close landed inside the predicted range.")
-                elif row.get("eod_range_hit") is False: st.error("Actual close finished outside the predicted range.")
-            if row.get("id") is not None and st.button(f"🗑 Remove {row['ticker']}", key=f"remove_{row['id']}_{i}", use_container_width=True):
-                if remove_prediction(row["id"]): st.success(f"{row['ticker']} removed."); st.rerun()
 
 
 # ============================================================
@@ -1123,6 +1362,21 @@ with tracker_tab:
 # ============================================================
 st.divider()
 st.subheader("How to Read This App")
+with st.expander("Daily carry-forward — how does it work?"):
+    st.markdown("""
+The tracker automatically finds the **most recent prior trading date** in your saved predictions.
+
+Those same tickers appear under **Today's Picks** for the next trading date.
+
+Press **Generate Predictions** and the app:
+
+1. Re-analyzes those stocks using the new day's prices and market conditions.
+2. Creates brand-new dated forecasts.
+3. Keeps every previous day's prediction unchanged.
+4. Prevents duplicate ticker/date records.
+
+You can remove a carried-forward ticker before generating, or add extra tickers for the new date.
+""")
 with st.expander("Model Confidence — what does the % mean?"):
     st.markdown("""
 Model Confidence is a **signal-strength score**, not a guaranteed probability.
